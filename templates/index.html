@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Platform</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <button class="sidebar-toggle">☰</button>
+        
+        <!-- Add ID to sidebar -->
+        <div id="research-sidebar" class="sidebar">
+            <div class="sidebar-section">
+                <h3>Research Projects</h3>
+                <div class="project-controls">
+                    <button id="createProject">Create New Project</button>
+                </div>
+                <div id="projectsList">
+                    <!-- Projects will be listed here dynamically -->
+                </div>
+            </div>
+        </div>
+
+        <!-- API Key Modal -->
+        <div id="apiKeyModal" class="modal">
+            <div class="modal-content">
+                <h2>OpenAI API Key</h2>
+                <p>Enter your OpenAI API key:</p>
+                <input type="password" id="apiKeyInput" placeholder="sk-...">
+                <div class="modal-buttons">
+                    <button id="saveApiKey">Save & Test</button>
+                    <button id="cancelApiKey">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add this after the API Key Modal -->
+        <div id="projectModal" class="modal">
+            <div class="modal-content">
+                <h2>New Research Project</h2>
+                <div class="form-group">
+                    <label for="projectNameInput">Project Name:</label>
+                    <input type="text" id="projectNameInput" placeholder="Enter project name" required>
+                </div>
+                <div class="form-group">
+                    <label for="projectDescriptionInput">Description:</label>
+                    <textarea id="projectDescriptionInput" placeholder="Enter project description (optional)"></textarea>
+                </div>
+                <div class="modal-buttons">
+                    <button id="saveProject">Create Project</button>
+                    <button id="cancelProject">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main workspace -->
+        <div class="workspace" id="project-workspace">
+            <!-- Project Header -->
+            <div class="project-header">
+                <h2 id="current-project-name">Select a Project</h2>
+                <div class="project-controls">
+                    <button id="toggleDocPanel"><i class="fas fa-folder"></i></button>
+                    <button id="toggleNewsPanel"><i class="fas fa-newspaper"></i></button>
+                    <button id="toggleEntityPanel"><i class="fas fa-project-diagram"></i></button>
+                </div>
+            </div>
+
+            <!-- Main Content Area - Modified Grid -->
+            <div class="workspace-grid">
+                <!-- Left Sidebar: Collapsible Document Panel -->
+                <div class="side-panel document-panel" id="documentPanel">
+                    <div class="panel-header">
+                        <h3>Documents</h3>
+                        <div class="document-controls">
+                            <button id="uploadDoc" class="file-upload-btn">
+                                <i class="fas fa-upload"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="documentTree">
+                        <!-- Documents will be rendered here -->
+                    </div>
+                </div>
+
+                <!-- Center: Research Assistant Chat -->
+                <div class="chat-panel">
+                    <div id="chat-messages" class="chat-messages">
+                        <!-- Chat messages here -->
+                    </div>
+                    <div class="chat-input-container">
+                        <textarea id="chat-input" placeholder="Ask about your documents..."></textarea>
+                        <button id="send-button"><i class="fas fa-paper-plane"></i></button>
+                    </div>
+                </div>
+
+                <!-- Right Sidebar: Context Panels -->
+                <div class="side-panel context-panel" id="contextPanel">
+                    <div class="panel-tabs">
+                        <button class="tab-button active" data-tab="newsTab">News</button>
+                        <button class="tab-button" data-tab="entityTab">Entities</button>
+                    </div>
+                    
+                    <!-- News Tab -->
+                    <div class="tab-content active" id="newsTab">
+                        <div class="news-feed" id="newsFeed">
+                            <!-- News items rendered here -->
+                        </div>
+                    </div>
+
+                    <!-- Entity Tab -->
+                    <div class="tab-content" id="entityTab">
+                        <div class="entity-list" id="entityList">
+                            <!-- Tracked entities rendered here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add these modals to your existing HTML -->
+        <div id="loginModal" class="modal">
+            <div class="modal-content">
+                <h2>Login</h2>
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="loginEmail">Email:</label>
+                        <input type="email" id="loginEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Password:</label>
+                        <input type="password" id="loginPassword" required>
+                    </div>
+                    <div class="form-buttons">
+                        <button type="submit">Login</button>
+                        <button type="button" onclick="document.getElementById('registerModal').style.display='block'; this.parentElement.parentElement.parentElement.parentElement.style.display='none'">Register</button>
+                    </div>
+                </form>
+                <div id="authStatus"></div>
+            </div>
+        </div>
+
+        <div id="registerModal" class="modal">
+            <div class="modal-content">
+                <h2>Register</h2>
+                <form id="registerForm">
+                    <div class="form-group">
+                        <label for="registerEmail">Email:</label>
+                        <input type="email" id="registerEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerPassword">Password:</label>
+                        <input type="password" id="registerPassword" required>
+                    </div>
+                    <div class="form-buttons">
+                        <button type="submit">Register</button>
+                        <button type="button" onclick="document.getElementById('loginModal').style.display='block'; this.parentElement.parentElement.parentElement.parentElement.style.display='none'">Back to Login</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Add this after your other modals -->
+        <div id="uploadModal" class="modal">
+            <div class="modal-content">
+                <h2>Upload Documents</h2>
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-message">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <p>Drag & drop files here or click to select</p>
+                        <p class="upload-subtitle">Supported format: PDF</p>
+                    </div>
+                    <input type="file" id="fileInput" accept=".pdf" multiple style="display: none">
+                </div>
+                <div class="upload-list" id="uploadList">
+                    <!-- Upload queue will be displayed here -->
+                </div>
+                <div class="modal-buttons">
+                    <button id="startUpload">Upload Files</button>
+                    <button id="cancelUpload">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', path='/js/websocket.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/chat.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/dashboard.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/auth.js') }}"></script>
+    <script defer src="{{ url_for('static', path='/js/projects.js') }}"></script>
+    <script defer src="{{ url_for('static', path='/js/workspace.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/research_sidebar.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/document_upload.js') }}"></script>
+ 
+
+
+
+</body>
+</html>
