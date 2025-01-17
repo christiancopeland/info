@@ -1,0 +1,75 @@
+Here's a breakdown of `project.py`:
+
+### Overview
+This file defines three main SQLAlchemy models that form the core data structure for research projects:
+
+1. **ResearchProject**
+   - Root entity representing a research project
+   - Contains basic project information and settings
+   - Links to folders through a one-to-many relationship
+
+2. **ProjectFolder**
+   - Represents folders within a project
+   - Supports hierarchical structure (folders within folders)
+   - Contains documents and can have a parent folder
+
+3. **Document**
+   - Represents uploaded documents
+   - Stores metadata and references to Qdrant chunks
+   - Belongs to a specific folder
+
+### Key Features
+
+**ResearchProject Model**:
+```python
+class ResearchProject(Base):
+    project_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    owner_id = Column(String, nullable=False)  # Stores auth token
+    settings = Column(JSONB, default={})  # Flexible settings storage
+```
+- Uses UUID for unique identification
+- JSONB settings allow for flexible project configuration
+- Tracks creation and update times
+- Cascading delete of folders
+
+**ProjectFolder Model**:
+```python
+class ProjectFolder(Base):
+    folder_id = Column(UUID(as_uuid=True), primary_key=True)
+    parent_folder_id = Column(UUID(as_uuid=True), ForeignKey('project_folders.folder_id'))
+    path_array = Column(ARRAY(UUID(as_uuid=True)), nullable=False)
+```
+- Supports nested folder structure
+- `path_array` tracks full path to folder
+- Cascading delete of documents
+- Self-referential for parent-child relationships
+
+**Document Model**:
+```python
+class Document(Base):
+    document_id = Column(UUID(as_uuid=True), primary_key=True)
+    qdrant_chunks = Column(ARRAY(String), default=[])
+    metadata = Column(JSONB, default={})
+```
+- Stores file metadata and processing status
+- Links to Qdrant vectors through chunk IDs
+- JSONB metadata for flexible document properties
+
+### Key Relationships
+```python
+# Project -> Folders (one-to-many)
+folders = relationship("ProjectFolder", back_populates="project", cascade="all, delete-orphan")
+
+# Folder -> Documents (one-to-many)
+documents = relationship("Document", back_populates="folder", cascade="all, delete-orphan")
+
+# Folder -> Parent Folder (self-referential)
+parent = relationship("ProjectFolder", remote_side=[folder_id])
+```
+
+### Database Considerations
+- Uses PostgreSQL-specific features (UUID, JSONB, ARRAY)
+- Implements proper cascading deletes
+- Handles hierarchical data structure
+- Supports document version tracking through metadata

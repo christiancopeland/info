@@ -1,0 +1,136 @@
+
+
+Here's a detailed breakdown of `document_processor.py`:
+
+### Purpose
+The `DocumentProcessor` class handles all document processing operations, including text extraction, chunking, embedding generation, and vector storage in Qdrant.
+
+### Key Components
+
+1. **Initialization and Configuration**:
+```python
+def __init__(self):
+    # Qdrant client setup
+    self.qdrant = QdrantClient(host="localhost", port=6333)
+    
+    # Redis for API key management
+    self.redis = redis.Redis(host="localhost", port=6379, db=0)
+    
+    # Processing constants
+    self.CHUNK_SIZE = 1000
+    self.CHUNK_OVERLAP = 200
+    self.max_retries = 3
+    self.max_workers = 4
+    self.batch_size = 5
+    
+    # Timeouts
+    self.page_timeout = 30  # seconds
+    self.chunk_timeout = 60  # seconds
+```
+
+2. **Core Processing Methods**:
+```python
+async def process_pdf(self, file: BytesIO, client_id: str) -> Dict:
+    """Main processing pipeline"""
+    # 1. PDF text extraction
+    # 2. Text chunking
+    # 3. Embedding generation
+    # 4. Vector storage
+```
+
+3. **Text Processing Pipeline**:
+- **PDF Extraction**:
+  ```python
+  async def _extract_text_async(self, pdf_reader) -> str:
+      """Extracts text from PDF concurrently"""
+      # Uses ThreadPoolExecutor for CPU-bound operations
+      # Handles multi-page documents
+  ```
+
+- **Text Chunking**:
+  ```python
+  def _chunk_text(self, text: str) -> List[str]:
+      """Splits text into overlapping chunks"""
+      # Intelligent chunk breaking at natural boundaries
+      # Maintains context with overlap
+  ```
+
+- **Embedding Generation**:
+  ```python
+  @retry(stop=stop_after_attempt(3))
+  async def _generate_embedding(self, text: str, openai_client: OpenAI) -> List[float]:
+      """Generates embeddings with retry logic"""
+      # Uses OpenAI's text-embedding-3-large
+      # Includes error handling and retries
+  ```
+
+### Key Features
+
+1. **Concurrent Processing**:
+```python
+async def _process_chunks_in_batches(self, chunks: List[str], ...) -> Dict:
+    """Process chunks concurrently in batches"""
+    # Processes multiple chunks simultaneously
+    # Manages API rate limits
+    # Tracks processing metrics
+```
+
+2. **Error Handling and Retries**:
+```python
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=60),
+    retry=should_retry_exception.__func__
+)
+```
+- Exponential backoff
+- Specific exception handling
+- Processing statistics tracking
+
+3. **Performance Monitoring**:
+```python
+@contextmanager
+def _track_processing_time(self, operation: str):
+    """Tracks operation timing"""
+    # Monitors processing durations
+    # Logs warnings for slow operations
+```
+
+4. **Vector Storage Management**:
+```python
+async def _store_chunk(self, doc_id: str, chunk_id: int, ...) -> str:
+    """Stores document chunks in Qdrant"""
+    # Manages vector storage
+    # Maintains metadata
+    # Handles storage errors
+```
+
+5. **Search Capabilities**:
+```python
+async def search_similar_chunks(self, query: str, limit: int = 5) -> List[Dict]:
+    """Semantic search across documents"""
+    # Generates query embeddings
+    # Performs vector similarity search
+    # Returns formatted results
+```
+
+### Technical Specifications
+
+1. **Dependencies**:
+- OpenAI API for embeddings
+- Qdrant for vector storage
+- Redis for API key management
+- PyPDF2 for PDF processing
+- Tenacity for retry logic
+
+2. **Performance Considerations**:
+- Concurrent processing with controlled batch sizes
+- Timeout management for long operations
+- Connection pooling for database operations
+- Memory-efficient streaming for large files
+
+3. **Security Features**:
+- API key management through Redis
+- Secure token handling
+- Rate limiting protection
+- Error isolation

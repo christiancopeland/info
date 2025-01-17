@@ -1,0 +1,49 @@
+Here's a breakdown of `project_service.py`:
+
+### Purpose
+The `ProjectService` class serves as an intermediary between the API endpoints and the database, handling all project-related operations. It manages both PostgreSQL storage (for project structure) and Qdrant storage (for document embeddings).
+
+### Key Components
+
+1. **Project Creation** (`create_project`):
+```python
+async def create_project(self, session: AsyncSession, name: str, owner_id: str, description: Optional[str] = None)
+```
+- Creates a new research project
+- Automatically creates default folders ('Documents', 'Reports', 'Research Notes')
+- Uses transaction management (commit/rollback)
+- Returns project details including ID and folder structure
+
+2. **Document Addition** (`add_document`):
+```python
+async def add_document(self, session: AsyncSession, project_id: str, folder_id: str, file_content: bytes, filename: str, client_id: str)
+```
+- Processes PDF documents through two steps:
+  1. Sends to DocumentProcessor for Qdrant storage (embeddings)
+  2. Creates PostgreSQL record with metadata and Qdrant references
+- Maintains dual storage system (PostgreSQL + Qdrant)
+- Handles file metadata and processing status
+
+3. **Document Retrieval** (`get_project_documents`):
+```python
+async def get_project_documents(self, session: AsyncSession, project_id: str, folder_id: Optional[str] = None)
+```
+- Retrieves documents either by project or specific folder
+- Uses SQLAlchemy joins for efficient querying
+- Returns formatted document metadata
+
+### Key Features
+1. **Error Handling**
+   - All methods include try/catch blocks
+   - Proper transaction management (commit/rollback)
+   - Returns FastAPI HTTP exceptions for proper error responses
+
+2. **Dual Storage Management**
+   - PostgreSQL for project structure and metadata
+   - Qdrant for document embeddings and semantic search
+   - Maintains references between both systems
+
+3. **Async Operations**
+   - All methods are async for better performance
+   - Uses SQLAlchemy's async session management
+   - Compatible with FastAPI's async endpoints
