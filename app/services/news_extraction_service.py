@@ -28,12 +28,13 @@ class FirecrawlResponse(BaseModel):
     data: FirecrawlData
 
 class NewsExtractionService:
-    def __init__(self, api_url: str, api_key: str):
+    def __init__(self, api_url: str, api_key: str = None):
         self.api_url = api_url
         self.headers = {
-            # "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
 
     def extract_articles(self, target_url: str) -> List[Article]:
         payload = {
@@ -86,22 +87,48 @@ class NewsExtractionService:
             "waitFor": 500
         }
 
-        response = requests.post(self.api_url, json=payload, headers=self.headers)
-        
-        # Save raw response to debug log file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        with open(f'firecrawl_debug_{timestamp}.json', 'w') as f:
-            try:
-                formatted_json = json.dumps(response.json(), indent=2)
-                f.write(formatted_json)
-            except:
-                f.write(response.text)
-
-        # Parse the response into Pydantic model
         try:
-            firecrawl_response = FirecrawlResponse.model_validate_json(response.text)
-            return firecrawl_response.data.extract.articles
+            print(f"Making request to {self.api_url} for URL: {target_url}")
+            response = requests.post(self.api_url, json=payload, headers=self.headers)
+            
+            print(f"Response status code: {response.status_code}")
+            print(f"Response headers: {dict(response.headers)}")
+            
+            # Save raw response to debug log file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            debug_filename = f'firecrawl_debug_{timestamp}.json'
+            
+            with open(debug_filename, 'w') as f:
+                try:
+                    if response.status_code != 200:
+                        print(f"Error response body: {response.text}")
+                        f.write(f"Status Code: {response.status_code}\n")
+                        f.write(f"Headers: {dict(response.headers)}\n")
+                        f.write(f"Body: {response.text}")
+                    else:
+                        formatted_json = json.dumps(response.json(), indent=2)
+                        f.write(formatted_json)
+                except Exception as e:
+                    print(f"Error saving debug file: {e}")
+                    f.write(response.text)
+
+            # Raise for status before parsing
+            response.raise_for_status()
+
+            # Parse the response into Pydantic model
+            try:
+                firecrawl_response = FirecrawlResponse.model_validate_json(response.text)
+                if not firecrawl_response.success:
+                    raise ValueError(f"Firecrawl returned error: {response.text}")
+                return firecrawl_response.data.extract.articles
+            except Exception as e:
+                print(f"Error parsing response: {e}")
+                print("Raw response:", response.text[:500])
+                raise ValueError(f"Failed to parse Firecrawl response: {str(e)}")
+                
+        except requests.exceptions.RequestException as e:
+            print(f"Request error: {type(e).__name__}: {str(e)}")
+            raise ValueError(f"Failed to make request to Firecrawl: {str(e)}")
         except Exception as e:
-            print(f"Error parsing response: {e}")
-            print("Raw response:", response.text[:500])
-            return []
+            print(f"Unexpected error: {type(e).__name__}: {str(e)}")
+            raise

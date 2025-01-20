@@ -12,6 +12,7 @@ from .core.dependencies import (
 from .api.v1.projects.routes import router as project_router
 from .api.v1.auth.routes import router as auth_router
 from .api.v1.websocket.routes import router as websocket_router
+from .api.v1.news.routes import router as news_routes
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -32,6 +33,7 @@ app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(websocket_router, prefix="/api/v1/websocket", tags=["websocket"])
 app.include_router(project_router, prefix="/api/v1", tags=["projects"])
+app.include_router(news_routes, prefix="/api/v1/news", tags=["news"])
 
 # Initialize services
 document_processor, redis_client, security_service, project_service = init_services()
