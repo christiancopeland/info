@@ -1002,58 +1002,103 @@ async def research_chat(websocket: WebSocket):
 4. **Project Structure**:
 
 ````````
-research_platform/
-├── app/
-│   ├── api/                 # API endpoints
-|   |   ├──v1/
-|   |       ├──auth/
-|   |       |  ├──__init__.py
-|   |       |  ├──routes.py
-|   |       |  ├──schemas.py
-|   |       |
-|   |       ├──projects/
-|   |       |  ├──__init__.py
-|   |       |  ├──routes.py
-|   |       |  ├──schemas.py
-|   |       |
-|   |       ├──websocket/
-|   |          ├──__init__.py
-|   |          ├──routes.py
-|   |          ├──schemas.py
-|   |
-│   ├── core/               # Core business logic
-│   |    ├──__init__.py
-│   |    ├──config.py 
-│   |    ├──dependencies.py
-│   |
-│   ├── models/             # Database models
-│   │   ├──__init__.py 
-│   │   ├──project.py
-│   │   ├──user.py
-│   │  
-│   ├── services/           # External service integrations
-|   |   ├──auth/
-|   |   |  ├──__init__.py
-|   |   |  ├──security_service.py
-|   |   |
-|   |   ├──project/
-|   |   |  ├──__init__.py
-|   |   |  ├──project_service.py
-|   |   |
-│   │   ├── document_processor.py
-│   │   └── project_service.py
-│   │  
-│   ├── utils/              # Utility functions
-│   │
-│   ├──main.py
-│   ├── database.py
-│   └── __init__.py
-│
-├── static/
-├── templates/
-├── tests/             # Database migrations
-└── docker/                # Docker configurations
-````````
+.
+├── app
+│   ├── api
+│   │   └── v1
+│   │       ├── auth
+│   │       │   ├── __init__.py
+│   │       │   ├── __pycache__
+│   │       │   │   ├── __init__.cpython-313.pyc
+│   │       │   │   └── routes.cpython-313.pyc
+│   │       │   ├── routes.py
+│   │       │   └── schemas.py
+│   │       ├── projects
+│   │       │   ├── __init__.py
+│   │       │   ├── __pycache__
+│   │       │   │   ├── __init__.cpython-313.pyc
+│   │       │   │   └── routes.cpython-313.pyc
+│   │       │   ├── routes.py
+│   │       │   └── schemas.py
+│   │       └── websocket
+│   │           ├── __init__.py
+│   │           ├── __pycache__
+│   │           │   ├── __init__.cpython-313.pyc
+│   │           │   └── routes.cpython-313.pyc
+│   │           ├── routes.py
+│   │           └── schemas.py
+│   ├── core
+│   │   ├── config.py
+│   │   ├── dependencies.py
+│   │   ├── exceptions.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── config.cpython-313.pyc
+│   │       ├── dependencies.cpython-313.pyc
+│   │       ├── exceptions.cpython-313.pyc
+│   │       └── __init__.cpython-313.pyc
+│   ├── database.py
+│   ├── __init__.py
+│   ├── main.py
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── projectexplanation
+│   │   ├── project.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-313.pyc
+│   │   │   ├── project.cpython-313.pyc
+│   │   │   └── user.cpython-313.pyc
+│   │   └── user.py
+│   ├── __pycache__
+│   │   ├── database.cpython-313.pyc
+│   │   ├── __init__.cpython-313.pyc
+│   │   └── main.cpython-313.pyc
+│   ├── scripts
+│   │   ├── add_raw_content_column.py
+│   │   ├── add_updated_at_column.py
+│   │   ├── insert_test_api_key.py
+│   │   └── test_update_owner_id.py
+│   └── services
+│       ├── auth
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-313.pyc
+│       │   │   └── security_service.cpython-313.pyc
+│       │   └── security_service.py
+│       ├── document_processorexplanation
+│       ├── document_processor.py
+│       ├── project_serviceexplanation
+│       ├── project_service.py
+│       └── __pycache__
+│           ├── document_processor.cpython-313.pyc
+│           └── project_service.cpython-313.pyc
+├── db_cmds
+├── extract.py
+├── implement_news_entity_feed_conversation.txt
+├── InformationIngestion.PRD
+├── proj_structure
+├── README.md
+├── requirements.txt
+├── run_appcmd
+├── startqdrant
+├── static
+│   ├── css
+│   │   └── styles.css
+│   ├── images
+│   └── js
+│       ├── auth.js
+│       ├── chat.js
+│       ├── dashboard.js
+│       ├── document_upload.js
+│       ├── main.js
+│       ├── projects.js
+│       ├── research_sidebar.js
+│       ├── websocket.js
+│       └── workspace.js
+├── templates
+│   └── index.html
+├── test_key
+└── tests
 
 5. **Example Dependencies**:
 
