@@ -8,6 +8,7 @@ class ProjectWorkspace {
         
         this.setupEventListeners();
         this.initializeDocumentControls();
+        console.log('News feed element:', this.newsFeed);
     }
 
     setupEventListeners() {
@@ -89,8 +90,24 @@ class ProjectWorkspace {
     }
 
     async loadNews() {
-        // Placeholder for future news loading functionality
-        console.log('News loading not yet implemented');
+        try {
+            console.log('Loading news...');
+            const response = await fetch('/api/v1/news/articles', {
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to load news');
+            }
+
+            const newsData = await response.json();
+            console.log('Received news data:', newsData);
+            this.renderNewsFeed(newsData);
+            
+        } catch (error) {
+            console.error('Error loading news:', error);
+            this.renderNewsFeed([]); // Render empty state on error
+        }
     }
 
     renderDocumentTree(documents) {
@@ -151,6 +168,41 @@ class ProjectWorkspace {
                 }
             });
         }
+    }
+
+    renderNewsFeed(articles) {
+        if (!this.newsFeed) {
+            console.error('News feed element not found!');
+            return;
+        }
+        
+        this.newsFeed.innerHTML = '';
+        
+        if (!articles.length) {
+            this.newsFeed.innerHTML = '<div class="empty-state">No news articles available</div>';
+            return;
+        }
+
+        articles.forEach(article => {
+            // Clean up the source URL to show only the domain
+            const sourceUrl = new URL(article.source_site);
+            const sourceDomain = sourceUrl.hostname.replace('www.', '');
+            
+            const item = document.createElement('div');
+            item.className = 'news-item';
+            
+            item.innerHTML = `
+                <div class="news-metadata">
+                    <span class="news-source">${sourceDomain}</span>
+                    <span class="news-date">${new Date(article.scraped_at).toLocaleDateString()}</span>
+                </div>
+                <h4 class="news-title">${article.title}</h4>
+                <p class="news-heading">${article.heading}</p>
+                <a href="${article.url}" target="_blank" class="news-link">Read more</a>
+            `;
+            
+            this.newsFeed.appendChild(item);
+        });
     }
 
     // Additional methods for handling documents, news, and entities
