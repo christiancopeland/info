@@ -12,7 +12,7 @@ router = APIRouter()
 @router.get("/articles")
 async def get_news_articles(
     db: AsyncSession = Depends(get_db),
-    limit: int = 10,
+    limit: int = 100,
     days: int = 7
 ) -> List[dict]:
     """
