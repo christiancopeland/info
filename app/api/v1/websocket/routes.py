@@ -74,57 +74,57 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
                 
                 # Add entity tracking commands
-                if command == 'track_entity':
-                    # Initialize services
-                    async with async_session() as session:
-                        entity_tracker = EntityTrackingService(session, document_processor)
+                # if command == 'track_entity':
+                #     # Initialize services
+                #     async with async_session() as session:
+                #         entity_tracker = EntityTrackingService(session, document_processor)
                         
-                        try:
-                            entity = await entity_tracker.add_tracked_entity(
-                                name=payload['name'],
-                                entity_type=payload.get('type', 'CUSTOM'),
-                                metadata=payload.get('metadata')
-                            )
+                #         try:
+                #             entity = await entity_tracker.add_tracked_entity(
+                #                 name=payload['name'],
+                #                 entity_type=payload.get('type', 'CUSTOM'),
+                #                 metadata=payload.get('metadata')
+                #             )
                             
-                            await websocket.send_json({
-                                "type": "command_response",
-                                "command": command,
-                                "status": "success",
-                                "data": {
-                                    "entity_id": str(entity.entity_id),
-                                    "name": entity.name
-                                }
-                            })
-                        except Exception as e:
-                            await websocket.send_json({
-                                "type": "error",
-                                "command": command,
-                                "error": str(e)
-                            })
+                #             await websocket.send_json({
+                #                 "type": "command_response",
+                #                 "command": command,
+                #                 "status": "success",
+                #                 "data": {
+                #                     "entity_id": str(entity.entity_id),
+                #                     "name": entity.name
+                #                 }
+                #             })
+                #         except Exception as e:
+                #             await websocket.send_json({
+                #                 "type": "error",
+                #                 "command": command,
+                #                 "error": str(e)
+                #             })
                 
-                elif command == 'get_entity_mentions':
-                    async with async_session() as session:
-                        entity_tracker = EntityTrackingService(session, document_processor)
+                # elif command == 'get_entity_mentions':
+                #     async with async_session() as session:
+                #         entity_tracker = EntityTrackingService(session, document_processor)
                         
-                        try:
-                            mentions = await entity_tracker.get_entity_mentions(
-                                entity_name=payload['name'],
-                                limit=payload.get('limit', 50),
-                                offset=payload.get('offset', 0)
-                            )
+                #         try:
+                #             mentions = await entity_tracker.get_entity_mentions(
+                #                 entity_name=payload['name'],
+                #                 limit=payload.get('limit', 50),
+                #                 offset=payload.get('offset', 0)
+                #             )
                             
-                            await websocket.send_json({
-                                "type": "command_response",
-                                "command": command,
-                                "status": "success",
-                                "data": mentions
-                            })
-                        except Exception as e:
-                            await websocket.send_json({
-                                "type": "error",
-                                "command": command,
-                                "error": str(e)
-                            })
+                #             await websocket.send_json({
+                #                 "type": "command_response",
+                #                 "command": command,
+                #                 "status": "success",
+                #                 "data": mentions
+                #             })
+                #         except Exception as e:
+                #             await websocket.send_json({
+                #                 "type": "error",
+                #                 "command": command,
+                #                 "error": str(e)
+                #             })
             
             # Handle regular chat messages
             elif message_data.get('type') == 'chat':

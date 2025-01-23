@@ -1066,4 +1066,218 @@ input[type="date"].news-filter::-webkit-calendar-picker-indicator:hover {
     border-color: var(--accent-color);
 }
 
+/* Entity Tracking Styles */
+.entity-search-container {
+    padding: 15px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.entity-search-input {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9em;
+    transition: border-color 0.2s ease;
+}
+
+.entity-search-input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+.entity-filter {
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.85em;
+    transition: all 0.2s ease;
+    min-width: 120px;
+}
+
+.entity-add-btn {
+    padding: 8px 12px;
+    background: var(--accent-color);
+    border: none;
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.entity-add-btn:hover {
+    background: var(--accent-hover);
+}
+
+.entities-list {
+    padding: 15px;
+    overflow-y: auto;
+    height: calc(100% - 100px);
+}
+
+.entity-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    margin-bottom: 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.entity-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.entity-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.entity-name {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.entity-type {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 2px 8px;
+    border-radius: 12px;
+    align-self: flex-start;
+}
+
+.entity-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.view-mentions-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.view-mentions-btn:hover {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+}
+
+.mentions-view {
+    padding: 1rem;
+}
+
+.mentions-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.mentions-header h3 {
+    margin: 0;
+}
+
+.back-btn {
+    padding: 0.5rem 1rem;
+    background: #f0f0f0;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.back-btn:hover {
+    background: #e0e0e0;
+}
+
+.mentions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.mention-item {
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 1rem;
+}
+
+.mention-context {
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+}
+
+.mention-metadata {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.9em;
+    color: #666;
+}
+
+.mention-doc, .mention-date {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.no-mentions {
+    text-align: center;
+    padding: 2rem;
+    color: #666;
+}
+
+/* Add these styles to your existing Entity Tracking Styles */
+.entity-add-form {
+    margin-bottom: 15px;
+}
+
+.entity-filter-controls {
+    display: flex;
+    gap: 10px;
+}
+
+.search-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Update existing styles */
+.entity-search-input {
+    flex: 1;
+    min-width: 0; /* Allows proper flex shrinking */
+}
+
+.search-filters {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.entity-filter {
+    flex: 1;
+    min-width: 120px;
+}
+
+.entity-add-btn {
+    white-space: nowrap;
+}
+
 
