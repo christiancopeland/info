@@ -10,9 +10,12 @@ from sqlalchemy.future import select
 
 # Internal imports
 from ....services.auth.security_service import SecurityService
+from ....services.entity_tracker import EntityTrackingService
+from ....services.document_processor import DocumentProcessor
 from ....core.config import settings
 from ....models.user import User
 from ....database import async_session
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,6 +27,8 @@ redis_client = redis.Redis(
     port=settings.REDIS_PORT,
     db=settings.REDIS_DB
 )
+
+document_processor = DocumentProcessor()
 
 class ConnectionManager:
     def __init__(self):
@@ -55,7 +60,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if message_data.get('type') == 'command':
                 # Handle command messages
                 command = message_data.get('command')
-                payload = message_data.get('payload')
+                payload = message_data.get('payload', {})
                 logger.debug(f"Received command: {command} with payload: {payload}")
                 
                 # Handle project_context command
@@ -67,6 +72,59 @@ async def websocket_endpoint(websocket: WebSocket):
                         "payload": payload
                     })
                     continue
+                
+                # Add entity tracking commands
+                if command == 'track_entity':
+                    # Initialize services
+                    async with async_session() as session:
+                        entity_tracker = EntityTrackingService(session, document_processor)
+                        
+                        try:
+                            entity = await entity_tracker.add_tracked_entity(
+                                name=payload['name'],
+                                entity_type=payload.get('type', 'CUSTOM'),
+                                metadata=payload.get('metadata')
+                            )
+                            
+                            await websocket.send_json({
+                                "type": "command_response",
+                                "command": command,
+                                "status": "success",
+                                "data": {
+                                    "entity_id": str(entity.entity_id),
+                                    "name": entity.name
+                                }
+                            })
+                        except Exception as e:
+                            await websocket.send_json({
+                                "type": "error",
+                                "command": command,
+                                "error": str(e)
+                            })
+                
+                elif command == 'get_entity_mentions':
+                    async with async_session() as session:
+                        entity_tracker = EntityTrackingService(session, document_processor)
+                        
+                        try:
+                            mentions = await entity_tracker.get_entity_mentions(
+                                entity_name=payload['name'],
+                                limit=payload.get('limit', 50),
+                                offset=payload.get('offset', 0)
+                            )
+                            
+                            await websocket.send_json({
+                                "type": "command_response",
+                                "command": command,
+                                "status": "success",
+                                "data": mentions
+                            })
+                        except Exception as e:
+                            await websocket.send_json({
+                                "type": "error",
+                                "command": command,
+                                "error": str(e)
+                            })
             
             # Handle regular chat messages
             elif message_data.get('type') == 'chat':

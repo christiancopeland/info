@@ -1,41 +1,10 @@
 from typing import List, Dict, Optional, Set
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Column, String, JSON, ForeignKey, Table, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime, timezone
 import logging
-from ..database import Base
+from ..models.entities import TrackedEntity, EntityMention
 import uuid
 
 logger = logging.getLogger(__name__)
-
-# Database Models
-class TrackedEntity(Base):
-    """Model for storing tracked entities"""
-    __tablename__ = "tracked_entities"
-    
-    entity_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
-    name = Column(String, nullable=False)
-    entity_type = Column(String, nullable=False)  # PERSON, ORG, LOCATION, CUSTOM
-    created_at = Column(String, nullable=False, default=lambda: datetime.utcnow().isoformat())
-    metadata = Column(JSON, nullable=True)
-    
-    __table_args__ = (
-        UniqueConstraint('user_id', 'name', name='uq_user_entity_name'),
-    )
-
-class EntityMention(Base):
-    """Model for storing entity mentions"""
-    __tablename__ = "entity_mentions"
-    
-    mention_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    entity_id = Column(UUID(as_uuid=True), ForeignKey("tracked_entities.entity_id", ondelete="CASCADE"))
-    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.document_id", ondelete="CASCADE"))
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
-    chunk_id = Column(String, nullable=False)  # Qdrant chunk ID
-    context = Column(String, nullable=False)
-    timestamp = Column(String, nullable=False, default=lambda: datetime.utcnow().isoformat())
 
 class EntityTrackingService:
     """Service for tracking and analyzing entities across documents"""
@@ -56,7 +25,7 @@ class EntityTrackingService:
             entity = TrackedEntity(
                 name=name.lower(),  # Store lowercase for case-insensitive matching
                 entity_type=entity_type,
-                metadata=metadata or {}
+                entity_metadata=metadata or {}
             )
             self.session.add(entity)
             await self.session.commit()
