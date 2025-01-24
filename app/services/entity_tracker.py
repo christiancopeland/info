@@ -6,6 +6,7 @@ import uuid
 import os
 from datetime import datetime
 from pathlib import Path
+import networkx as nx
 
 
 from ..models.entities import TrackedEntity, EntityMention
@@ -18,10 +19,13 @@ logger = logging.getLogger(__name__)
 class EntityTrackingService:
     """Service for tracking and analyzing entities across documents"""
     
-    def __init__(self, session: AsyncSession, document_processor):
+    def __init__(self, session: AsyncSession, document_processor, debug: bool = False):
         self.session = session
         self.document_processor = document_processor
         self.active_entities: Set[str] = set()  # Cache of currently tracked entities
+        self.entity_graph = nx.Graph()
+        self.debug = debug
+        self.debug_file = None
     
     async def add_tracked_entity(
         self,
@@ -419,3 +423,347 @@ class EntityTrackingService:
             logger.info(f"Fuzzy matched '{entity_name}' to existing entity '{entity.name}'")
         
         return entity.entity_id
+
+    def _init_debug_file(self, entity_name: str) -> None:
+        """Initialize debug file if debug mode is enabled"""
+        if self.debug:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            debug_dir = "debug_logs"
+            os.makedirs(debug_dir, exist_ok=True)
+            self.debug_file = f"{debug_dir}/relationship_analysis_{entity_name}_{timestamp}.log"
+            
+            with open(self.debug_file, "w", encoding="utf-8") as f:
+                f.write(f"Relationship Analysis Debug Log\n")
+                f.write(f"Entity: {entity_name}\n")
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                f.write("=" * 80 + "\n\n")
+
+    def _write_debug(self, message: str) -> None:
+        """Write debug message to both logger and file if enabled"""
+        logger.debug(message)
+        if self.debug and self.debug_file:
+            with open(self.debug_file, "a", encoding="utf-8") as f:
+                f.write(f"{message}\n")
+
+    async def analyze_entity_relationships(self, entity_name: str) -> Dict:
+        """Analyze relationships for a specific entity"""
+        self._init_debug_file(entity_name)
+        self._write_debug(f"Starting relationship analysis for: {entity_name}")
+        
+        try:
+            # First check if we have mentions for this entity
+            mention_check = await self.session.execute(
+                text("""
+                    SELECT COUNT(*) as mention_count
+                    FROM entity_mentions em
+                    JOIN tracked_entities te ON em.entity_id = te.entity_id
+                    WHERE te.name_lower = :entity_name
+                """),
+                {"entity_name": entity_name.lower()}
+            )
+            mention_count = mention_check.scalar()
+            self._write_debug(f"Found {mention_count} mentions for {entity_name}")
+
+            if mention_count == 0:
+                self._write_debug(f"No mentions found for entity: {entity_name}")
+                return {"nodes": [], "edges": [], "central_entities": []}
+
+            # Get related entities
+            related_entities = await self._find_related_entities(entity_name)
+            self._write_debug(f"Found {len(related_entities)} related entities: {related_entities}")
+            
+            # Build relationship graph
+            self._write_debug("Building relationship graph")
+            for related_entity in related_entities:
+                self._write_debug(f"Analyzing relationship with: {related_entity}")
+                
+                contexts = await self._get_cooccurrence_contexts(
+                    entity1=entity_name,
+                    entity2=related_entity
+                )
+                
+                if contexts:
+                    strength = await self._calculate_relationship_strength(
+                        entity1=entity_name,
+                        entity2=related_entity,
+                        contexts=contexts
+                    )
+                    
+                    self.entity_graph.add_edge(
+                        entity_name,
+                        related_entity,
+                        weight=strength,
+                        contexts=contexts[:5]
+                    )
+                    self._write_debug(f"Added edge to graph: {entity_name} - {related_entity} (strength: {strength:.3f})")
+            
+            network = await self._get_entity_network(entity_name)
+            self._write_debug(f"Network analysis complete. Nodes: {len(network['nodes'])}, Edges: {len(network['edges'])}")
+            
+            if self.debug:
+                self._write_debug("\nFinal Network Data:")
+                self._write_debug(f"Nodes: {network['nodes']}")
+                self._write_debug(f"Edges: {network['edges']}")
+                self._write_debug(f"Central entities: {network['central_entities']}")
+                
+                logger.info(f"Debug log written to: {self.debug_file}")
+            
+            return network
+            
+        except Exception as e:
+            self._write_debug(f"Error in relationship analysis: {str(e)}")
+            raise
+            
+    async def _find_related_entities(self, entity_name: str) -> List[str]:
+        """Find entities that appear in the same documents"""
+        self._write_debug(f"Finding related entities for: {entity_name}")
+        try:
+            # First, verify the entity exists and get its ID
+            entity_check_query = text("""
+                SELECT entity_id, name 
+                FROM tracked_entities 
+                WHERE name_lower = :entity_name
+            """)
+            result = await self.session.execute(
+                entity_check_query,
+                {"entity_name": entity_name.lower()}
+            )
+            entity = result.first()
+            self._write_debug(f"Found entity record: {entity}")
+
+            # Check if we have any mentions for this entity
+            mentions_check_query = text("""
+                SELECT COUNT(*) as mention_count, 
+                       COUNT(DISTINCT document_id) as doc_count
+                FROM entity_mentions
+                WHERE entity_id = :entity_id
+            """)
+            result = await self.session.execute(
+                mentions_check_query,
+                {"entity_id": entity.entity_id if entity else None}
+            )
+            mention_stats = result.first()
+            self._write_debug(f"Entity mention stats: {mention_stats}")
+
+            # Now proceed with finding related entities
+            query = text("""
+                WITH entity_documents AS (
+                    SELECT DISTINCT document_id 
+                    FROM entity_mentions 
+                    WHERE entity_id = (
+                        SELECT entity_id 
+                        FROM tracked_entities 
+                        WHERE name_lower = :entity_name
+                    )
+                )
+                SELECT DISTINCT te.name, te.entity_id,
+                       COUNT(DISTINCT em.document_id) as shared_docs
+                FROM entity_mentions em
+                JOIN tracked_entities te ON em.entity_id = te.entity_id
+                WHERE em.document_id IN (SELECT document_id FROM entity_documents)
+                AND te.name_lower != :entity_name
+                GROUP BY te.name, te.entity_id
+            """)
+            
+            self._write_debug("Executing related entities query")
+            result = await self.session.execute(
+                query,
+                {"entity_name": entity_name.lower()}
+            )
+            
+            entities = [{"name": row.name, "shared_docs": row.shared_docs} for row in result]
+            self._write_debug(f"Found {len(entities)} related entities")
+            self._write_debug(f"Related entities with stats: {entities}")
+            
+            return [e["name"] for e in entities]
+            
+        except Exception as e:
+            self._write_debug(f"Error finding related entities: {str(e)}")
+            raise
+
+    async def _get_cooccurrence_contexts(
+        self,
+        entity1: str,
+        entity2: str
+    ) -> List[Dict]:
+        """Get contexts where two entities co-occur"""
+        try:
+            query = text("""
+                WITH entity1_mentions AS (
+                    SELECT document_id, context, chunk_id
+                    FROM entity_mentions
+                    WHERE entity_id = (
+                        SELECT entity_id FROM tracked_entities 
+                        WHERE name_lower = :entity1_name
+                    )
+                ),
+                entity2_mentions AS (
+                    SELECT document_id, context, chunk_id
+                    FROM entity_mentions
+                    WHERE entity_id = (
+                        SELECT entity_id FROM tracked_entities 
+                        WHERE name_lower = :entity2_name
+                    )
+                )
+                SELECT 
+                    e1.document_id as doc_id,
+                    e1.context as context1,
+                    e2.context as context2,
+                    d.filename as filename
+                FROM entity1_mentions e1
+                JOIN entity2_mentions e2 
+                    ON e1.document_id = e2.document_id 
+                    AND e1.chunk_id = e2.chunk_id
+                JOIN documents d ON e1.document_id = d.document_id
+                LIMIT 10
+            """)
+            
+            self._write_debug("Executing co-occurrence query")
+            result = await self.session.execute(
+                query,
+                {
+                    "entity1_name": entity1.lower(),
+                    "entity2_name": entity2.lower()
+                }
+            )
+            
+            # Format contexts for better display
+            contexts = []
+            for row in result:
+                # Clean and truncate the contexts
+                context1 = ' '.join(row.context1.split())[:200]  # Clean whitespace and truncate
+                context2 = ' '.join(row.context2.split())[:200]  # Clean whitespace and truncate
+                
+                contexts.append({
+                    "document_id": str(row.doc_id),
+                    "context": f"...{context1}... and ...{context2}...",  # Combined context
+                    "filename": row.filename
+                })
+            
+            self._write_debug(f"Found {len(contexts)} co-occurrence contexts")
+            if contexts:
+                self._write_debug(f"Sample context: {contexts[0]}")
+            
+            return contexts
+            
+        except Exception as e:
+            self._write_debug(f"Error getting co-occurrence contexts: {str(e)}")
+            raise
+
+    async def _calculate_relationship_strength(
+        self,
+        entity1: str,
+        entity2: str,
+        contexts: List[Dict]
+    ) -> float:
+        """Calculate relationship strength based on multiple factors"""
+        try:
+            # Count co-occurrences and unique documents
+            cooccurrence_count = len(contexts)
+            unique_docs = len({ctx['document_id'] for ctx in contexts})
+            
+            # Get mention counts and document counts for each entity
+            async def get_entity_stats(entity_name):
+                result = await self.session.execute(
+                    text("""
+                        SELECT 
+                            COUNT(*) as mention_count,
+                            COUNT(DISTINCT document_id) as doc_count
+                        FROM entity_mentions em
+                        JOIN tracked_entities te ON em.entity_id = te.entity_id
+                        WHERE te.name_lower = :entity_name
+                    """),
+                    {"entity_name": entity_name.lower()}
+                )
+                return result.first()
+            
+            entity1_stats = await get_entity_stats(entity1)
+            entity2_stats = await get_entity_stats(entity2)
+            
+            # Calculate Jaccard similarity of document sets
+            jaccard = unique_docs / (
+                entity1_stats.doc_count + 
+                entity2_stats.doc_count - 
+                unique_docs
+            ) if (entity1_stats.doc_count + entity2_stats.doc_count - unique_docs) > 0 else 0
+            
+            # Calculate normalized co-occurrence score
+            # Consider both document-level and mention-level frequencies
+            doc_frequency = unique_docs / max(entity1_stats.doc_count, entity2_stats.doc_count)
+            mention_frequency = cooccurrence_count / min(
+                entity1_stats.mention_count,
+                entity2_stats.mention_count
+            )
+            
+            # Combine scores with weights
+            strength = (
+                (jaccard * 0.3) +               # Document overlap
+                (doc_frequency * 0.3) +         # Document frequency
+                (mention_frequency * 0.4)       # Mention frequency
+            )
+            
+            self._write_debug(f"""
+                Relationship strength calculation for {entity1} - {entity2}:
+                - Co-occurrences: {cooccurrence_count}
+                - Unique documents: {unique_docs}
+                - Entity1 docs: {entity1_stats.doc_count} ({entity1_stats.mention_count} mentions)
+                - Entity2 docs: {entity2_stats.doc_count} ({entity2_stats.mention_count} mentions)
+                - Jaccard similarity: {jaccard:.3f}
+                - Document frequency: {doc_frequency:.3f}
+                - Mention frequency: {mention_frequency:.3f}
+                - Final strength: {strength:.3f}
+            """)
+            
+            return strength
+            
+        except Exception as e:
+            self._write_debug(f"Error calculating relationship strength: {str(e)}")
+            raise
+
+    async def _get_entity_network(
+        self,
+        entity_name: str,
+        depth: int = 2
+    ) -> Dict:
+        """Get network of related entities with their relationships"""
+        if not self.entity_graph.has_node(entity_name):
+            return {
+                "nodes": [],
+                "edges": [],
+                "central_entities": []
+            }
+            
+        # Get subgraph centered on entity
+        neighbors = nx.single_source_shortest_path_length(
+            self.entity_graph,
+            entity_name,
+            cutoff=depth
+        )
+        subgraph = self.entity_graph.subgraph(neighbors.keys())
+        
+        # Calculate node importance
+        pagerank = nx.pagerank(subgraph, weight='weight')
+        
+        # Format for frontend visualization
+        nodes = [{
+            "id": node,
+            "score": pagerank[node],
+            "depth": neighbors[node]
+        } for node in subgraph.nodes()]
+        
+        edges = [{
+            "source": e[0],
+            "target": e[1],
+            "weight": subgraph.edges[e]['weight'],
+            "contexts": subgraph.edges[e].get('contexts', [])
+        } for e in subgraph.edges()]
+        
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "central_entities": sorted(
+                pagerank.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:5]
+        }

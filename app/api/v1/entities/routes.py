@@ -118,3 +118,18 @@ async def get_tracked_entities(
             status_code=500,
             detail=f"Failed to fetch tracked entities: {str(e)}"
         )
+
+@router.get("/entities/{entity_name}/relationships")
+async def get_entity_relationships(
+    entity_name: str,
+    depth: int = 2,
+    debug: bool = True,
+    session: AsyncSession = Depends(get_db)
+):
+    """Get relationship network for an entity"""
+    entity_tracker = EntityTrackingService(session, document_processor, debug=debug)
+    try:
+        network = await entity_tracker.analyze_entity_relationships(entity_name)
+        return network
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

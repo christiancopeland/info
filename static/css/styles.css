@@ -1454,4 +1454,161 @@ input[type="date"].news-filter::-webkit-calendar-picker-indicator:hover {
     padding: 15px;
 }
 
+.relationships-view {
+    padding: 20px;
+    color: var(--text-primary);
+    height: 100%;
+    overflow-y: auto;
+}
+
+.relationships-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.central-entities {
+    background: var(--bg-primary);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border-color);
+}
+
+.central-entities h3 {
+    color: var(--text-primary);
+    margin-bottom: 15px;
+    font-size: 1.1em;
+}
+
+.central-entities ul {
+    list-style: none;
+    padding: 0;
+}
+
+.central-entities li {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.central-entities li:last-child {
+    border-bottom: none;
+}
+
+.relationship-item {
+    background: var(--bg-primary);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    border: 1px solid var(--border-color);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.relationship-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.relationship-entities {
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+}
+
+.relationship-strength {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    background: var(--bg-secondary);
+    padding: 4px 8px;
+    border-radius: 12px;
+    display: inline-block;
+}
+
+.relationship-contexts {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+}
+
+.context-item {
+    background: var(--bg-secondary);
+    padding: 12px;
+    margin-top: 8px;
+    border-radius: 6px;
+    font-size: 0.9em;
+    color: var(--text-primary);
+    font-family: 'Roboto Mono', monospace;
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+.context-item:first-child {
+    margin-top: 0;
+}
+
+/* Entity percentage badge */
+.entity-percentage {
+    background: var(--accent-color);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    color: var(--text-primary);
+}
+
+/* Scrollbar for relationships view */
+.relationships-view::-webkit-scrollbar {
+    width: 6px;
+}
+
+.relationships-view::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+.relationships-view::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+.relationships-view::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+
+/* Network Visualization */
+.network-visualization {
+    width: 100%;
+    height: 300px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.strength-bar-container {
+    background: var(--bg-primary);
+    height: 8px;
+    border-radius: 4px;
+    margin-top: 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+.strength-bar {
+    background: var(--accent-color);
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.strength-label {
+    position: absolute;
+    right: 0;
+    top: -18px;
+    font-size: 0.8em;
+    color: var(--text-secondary);
+}
+
 
