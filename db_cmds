@@ -1,8 +1,0 @@
-## Login to db as created user 
-psql -d research_platform -U bron
-
-## Add user to created db
-dbname=# CREATE USER tom WITH PASSWORD 'myPassword';
-
-## Grant all privs to user on db
-dbname=# GRANT ALL PRIVILEGES ON DATABASE jerry to tom;
