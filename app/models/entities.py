@@ -1,5 +1,5 @@
 from typing import Dict, Optional
-from sqlalchemy import Column, String, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, JSON, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import uuid
@@ -22,12 +22,14 @@ class TrackedEntity(Base):
     entity_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
     name = Column(String, nullable=False)
+    name_lower = Column(String, nullable=False)
     entity_type = Column(String, nullable=False)
     created_at = Column(String, nullable=False, default=lambda: datetime.utcnow().isoformat())
     entity_metadata = Column(JSON, nullable=True)
     
     __table_args__ = (
-        UniqueConstraint('user_id', 'name', name='uq_user_entity_name'),
+        UniqueConstraint('user_id', 'name_lower', name='uq_user_entity_name'),
+        Index('ix_tracked_entities_name_lower_trgm', 'name_lower', postgresql_using='gist', postgresql_ops={'name_lower': 'gist_trgm_ops'}),
     )
     
     def __repr__(self):

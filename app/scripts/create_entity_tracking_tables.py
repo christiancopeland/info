@@ -107,6 +107,10 @@ async def create_entity_tracking_tables(dry_run: bool = False):
             # Store SQL commands for dry run
             sql_commands = []
             
+            # Enable trigram extension
+            logger.info("Enabling pg_trgm extension...")
+            sql_commands.append("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+            
             # Drop existing tables one at a time
             logger.info("Dropping existing entity tracking tables if they exist...")
             sql_commands.extend([
@@ -121,10 +125,12 @@ async def create_entity_tracking_tables(dry_run: bool = False):
                     entity_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     user_id UUID NOT NULL REFERENCES users(user_id),
                     name VARCHAR NOT NULL,
+                    name_lower VARCHAR NOT NULL,
                     entity_type VARCHAR NOT NULL,
                     created_at VARCHAR NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     entity_metadata JSONB,
-                    CONSTRAINT unique_user_entity UNIQUE (user_id, entity_id)
+                    CONSTRAINT unique_user_entity UNIQUE (user_id, entity_id),
+                    CONSTRAINT uq_user_entity_name UNIQUE (user_id, name_lower)
                 );
             """
             sql_commands.append(create_tracked_entities)
@@ -133,7 +139,8 @@ async def create_entity_tracking_tables(dry_run: bool = False):
             tracked_entities_indexes = [
                 "CREATE INDEX idx_tracked_entities_user_id ON tracked_entities(user_id);",
                 "CREATE INDEX idx_tracked_entities_name ON tracked_entities(name);",
-                "CREATE UNIQUE INDEX idx_user_entity_name ON tracked_entities(user_id, name);"
+                """CREATE INDEX ix_tracked_entities_name_lower_trgm ON tracked_entities 
+                   USING gist (name_lower gist_trgm_ops);"""
             ]
             sql_commands.extend(tracked_entities_indexes)
             

@@ -159,13 +159,47 @@ class EntityTracker {
     }
 
     closeMentionsView() {
-        const entityTab = document.getElementById('entityTab');
-        entityTab.innerHTML = `
-            <div class="entity-list" id="entityList"></div>
+        // First, get the entity list container
+        const entityList = document.getElementById('entityList');
+        if (!entityList) {
+            console.error('Entity list element not found');
+            return;
+        }
+
+        // Set up the initial structure
+        entityList.innerHTML = `
+            <div class="entity-search-container">
+                <div class="search-controls">
+                    <div class="entity-add-form">
+                        <input type="text" id="entityNameInput" class="entity-search-input" placeholder="Enter entity name">
+                        <div class="search-filters">
+                            <select class="entity-filter" id="entityTypeSelect">
+                                <option value="CUSTOM">Custom</option>
+                                <option value="PERSON">Person</option>
+                                <option value="ORGANIZATION">Organization</option>
+                            </select>
+                            <button id="addEntityBtn" class="entity-add-btn">
+                                <i class="fas fa-plus"></i> Add Entity
+                            </button>
+                        </div>
+                    </div>
+                    <div class="entity-filter-controls">
+                        <input type="text" class="entity-search-input" placeholder="Search entities...">
+                        <select class="entity-filter" id="entityTypeFilter">
+                            <option value="ALL">All Types</option>
+                            <option value="PERSON">Person</option>
+                            <option value="ORGANIZATION">Organization</option>
+                            <option value="CUSTOM">Custom</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="entities-list" id="entitiesList"></div>
         `;
-        this.setupUI();
+
+        // Now that the DOM elements exist, set up event listeners and load entities
         this.setupEventListeners();
-        this.refreshEntityList();
+        this.loadEntities();
     }
 
     async loadEntities() {
