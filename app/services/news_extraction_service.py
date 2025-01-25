@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+from playwright.async_api import async_playwright
 
 class Article(BaseModel):
     title: str
@@ -179,13 +180,121 @@ class NewsExtractionService:
             print(f"Unexpected error: {type(e).__name__}: {str(e)}")
             raise
 
+    async def scrape_liveblog_content(self, url: str) -> str:
+        """
+        Scrape content from a liveblog article using Playwright for dynamic content.
+        Returns the extracted text content or raises ValueError if extraction fails.
+        """
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_viewport_size({"width": 1920, "height": 1080})
+                
+                # Navigate to the URL and wait for content
+                await page.goto(url)
+                
+                # Wait for the main content container
+                await page.wait_for_selector('.wysiwyg-content', timeout=30000)
+                
+                # Click "Read more" button if it exists
+                try:
+                    read_more_button = await page.wait_for_selector('button:has-text("Read more")', timeout=5000)
+                    if read_more_button:
+                        await read_more_button.click()
+                        await page.wait_for_timeout(1000)
+                except:
+                    pass
+                
+                text_content = []
+                
+                # Get the main headline/title
+                main_title = await page.query_selector('h1')
+                if main_title:
+                    title_text = await main_title.text_content()
+                    text_content.append(f"# {title_text.strip()}\n")
+                
+                # Get the summary content
+                summary = await page.query_selector('.wysiwyg-content')
+                if summary:
+                    summary_text = await summary.text_content()
+                    if summary_text.strip():
+                        text_content.append("SUMMARY:")
+                        text_content.append(summary_text.strip())
+                
+                # Get all liveblog entries
+                entries = await page.query_selector_all('.timeline-item')
+                
+                for entry in entries:
+                    # Extract timestamp
+                    timestamp = await entry.query_selector('.timeline-item__time')
+                    if timestamp:
+                        time_text = await timestamp.text_content()
+                        text_content.append(f"\n[{time_text.strip()}]\n")
+                    
+                    # Extract content
+                    content = await entry.query_selector('.timeline-item__content')
+                    if content:
+                        # Get headers
+                        headers = await content.query_selector_all('h2, h3, h4')
+                        for header in headers:
+                            header_text = await header.text_content()
+                            if header_text.strip():
+                                text_content.append(f"\n## {header_text.strip()}\n")
+                        
+                        # Get paragraphs
+                        paragraphs = await content.query_selector_all('p')
+                        for p in paragraphs:
+                            p_text = await p.text_content()
+                            if p_text.strip():
+                                text_content.append(p_text.strip())
+                        
+                        # Get list items
+                        list_items = await content.query_selector_all('li')
+                        for item in list_items:
+                            item_text = await item.text_content()
+                            if item_text.strip():
+                                text_content.append(f"• {item_text.strip()}")
+                
+                # If no timeline items found, try to get content from wysiwyg sections
+                if not entries:
+                    wysiwyg_content = await page.query_selector_all('.wysiwyg-content h2, .wysiwyg-content h3, .wysiwyg-content p, .wysiwyg-content li')
+                    for content in wysiwyg_content:
+                        tag_name = await content.evaluate('element => element.tagName.toLowerCase()')
+                        content_text = await content.text_content()
+                        
+                        if content_text.strip():
+                            if tag_name in ['h2', 'h3']:
+                                text_content.append(f"\n## {content_text.strip()}\n")
+                            elif tag_name == 'li':
+                                text_content.append(f"• {content_text.strip()}")
+                            else:
+                                text_content.append(content_text.strip())
+                
+                # Remove duplicate paragraphs that are next to each other
+                filtered_content = []
+                prev_content = None
+                for content in text_content:
+                    if content != prev_content:
+                        filtered_content.append(content)
+                    prev_content = content
+                
+                return self._filter_content('\n\n'.join(filtered_content))
+                
+            finally:
+                await browser.close()
+
     async def scrape_article_content(self, url: str) -> str:
         """
         Scrape the main content from a news article URL.
         Returns the extracted text content or raises ValueError if extraction fails.
         """
         try:
-            # Make request to the article URL
+            # Check if it's a liveblog
+            if 'liveblog' in url.lower():
+                return await self.scrape_liveblog_content(url)
+
+            # Regular article scraping logic continues...
             response = requests.get(url, headers=self.scraper_headers, timeout=30)
             response.raise_for_status()
             
