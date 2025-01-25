@@ -3,6 +3,7 @@ class NewsFeed {
         this.newsFeed = document.getElementById('newsFeed');
         this.articles = []; // Store articles for filtering
         this.initialize();
+        this.setupTabListener();
     }
 
     async initialize() {
@@ -16,9 +17,9 @@ class NewsFeed {
         const existingSearch = this.newsFeed.parentNode.querySelector('.news-search-container');
         if (existingSearch) {
             console.log('Search interface already exists');
-            // Use existing elements
+            // Use existing elements with more specific IDs
             this.searchInput = existingSearch.querySelector('#newsSearchInput');
-            this.sourceFilter = existingSearch.querySelector('#sourceFilter');
+            this.sourceFilter = existingSearch.querySelector('#newsSourceSelect');  // Changed ID
             this.dateFromFilter = existingSearch.querySelector('#dateFromFilter');
             this.dateToFilter = existingSearch.querySelector('#dateToFilter');
             return;
@@ -31,7 +32,7 @@ class NewsFeed {
             <div class="search-controls">
                 <input type="text" id="newsSearchInput" placeholder="Search news..." class="news-search-input">
                 <div class="search-filters">
-                    <select id="sourceFilter" class="news-filter">
+                    <select id="newsSourceSelect" class="news-filter">  <!-- Changed ID -->
                         <option value="">All Sources</option>
                     </select>
                     <input type="date" id="dateFromFilter" class="news-filter" placeholder="From Date">
@@ -42,9 +43,9 @@ class NewsFeed {
         
         this.newsFeed.parentNode.insertBefore(searchContainer, this.newsFeed);
         
-        // Store references to search elements
+        // Store references to search elements with updated ID
         this.searchInput = document.getElementById('newsSearchInput');
-        this.sourceFilter = document.getElementById('sourceFilter');
+        this.sourceFilter = document.getElementById('newsSourceSelect');  // Changed ID
         this.dateFromFilter = document.getElementById('dateFromFilter');
         this.dateToFilter = document.getElementById('dateToFilter');
     }
@@ -159,6 +160,33 @@ class NewsFeed {
             
             this.newsFeed.appendChild(item);
         });
+    }
+
+    setupTabListener() {
+        // Listen for clicks on the News tab button
+        const newsTabButton = document.querySelector('.tab-button[data-tab="newsTab"]');
+        if (newsTabButton) {
+            newsTabButton.addEventListener('click', () => {
+                // Clear entity tab content while preserving structure
+                const entityList = document.getElementById('entityList');
+                if (entityList) {
+                    entityList.innerHTML = ''; // Clear only the inner content
+                }
+                
+                // Ensure news feed container exists
+                if (!this.newsFeed) {
+                    const newsTab = document.getElementById('newsTab');
+                    if (newsTab) {
+                        newsTab.innerHTML = '<div class="news-feed" id="newsFeed"></div>';
+                        this.newsFeed = document.getElementById('newsFeed');
+                    }
+                }
+                
+                // Reinitialize the news feed interface
+                this.setupSearchInterface();
+                this.loadNews();
+            });
+        }
     }
 }
 

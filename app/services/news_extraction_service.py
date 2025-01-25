@@ -3,6 +3,8 @@ import requests
 from typing import List
 import json
 from datetime import datetime
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 class Article(BaseModel):
     title: str
@@ -28,13 +30,57 @@ class FirecrawlResponse(BaseModel):
     data: FirecrawlData
 
 class NewsExtractionService:
-    def __init__(self, api_url: str, api_key: str = None):
+    def __init__(self, api_url: str, api_key: str = None, filtered_phrases: List[str] = None):
         self.api_url = api_url
         self.headers = {
             "Content-Type": "application/json"
         }
         if api_key:
             self.headers["Authorization"] = f"Bearer {api_key}"
+        # Add common headers to mimic a browser
+        self.scraper_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+        # Default filtered phrases if none provided
+        self.filtered_phrases = filtered_phrases or [
+            "support propublica's investigative reporting",
+            "donate now",
+            "we're trying something new",
+            "was it helpful",
+            "recommended stories",
+            "do you work for",
+            "propublica wants to hear from you",
+            "we're expanding our coverage",
+            "with your help, we can dig deeper",
+            "read more",
+            # Al Jazeera video player phrases
+            "watch below",
+            "chapters",
+            "descriptions off",
+            "captions settings",
+            "captions off",
+            "this is a modal window",
+            "beginning of dialog window",
+            "end of dialog window",
+            "escape will cancel",
+            "modal can be closed",
+            "activating the close button",
+            "selected",
+            "opens captions settings dialog"
+        ]
+
+    def _filter_content(self, content: str) -> str:
+        """Filter out unwanted phrases from content."""
+        filtered_content = content
+        for phrase in self.filtered_phrases:
+            filtered_content = filtered_content.replace(phrase.lower(), '')
+            filtered_content = filtered_content.replace(phrase.capitalize(), '')
+            filtered_content = filtered_content.replace(phrase.upper(), '')
+        
+        # Clean up any double newlines or spaces created by filtering
+        return '\n'.join(line.strip() for line in filtered_content.split('\n') if line.strip())
 
     def extract_articles(self, target_url: str) -> List[Article]:
         payload = {
@@ -132,3 +178,128 @@ class NewsExtractionService:
         except Exception as e:
             print(f"Unexpected error: {type(e).__name__}: {str(e)}")
             raise
+
+    async def scrape_article_content(self, url: str) -> str:
+        """
+        Scrape the main content from a news article URL.
+        Returns the extracted text content or raises ValueError if extraction fails.
+        """
+        try:
+            # Make request to the article URL
+            response = requests.get(url, headers=self.scraper_headers, timeout=30)
+            response.raise_for_status()
+            
+            # Parse HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Remove unwanted elements
+            for element in soup.find_all(['script', 'style', 'nav', 'header', 'footer', 'iframe']):
+                element.decompose()
+            
+            text_content = []
+            
+            # Get the main headline/title
+            main_title = soup.find('h1')
+            if main_title:
+                title_text = main_title.get_text()
+                text_content.append(f"# {title_text.strip()}\n")
+            
+            # Special handling for Al Jazeera
+            if 'aljazeera.com' in url:
+                content = soup.select_one('[class*="wysiwyg"]')
+                if content:
+                    # Try to click "Read more" button if it exists (for liveblogs)
+                    if 'liveblog' in url.lower():
+                        text_content.append("SUMMARY:")
+                        summary_text = content.get_text().strip()
+                        if summary_text:
+                            text_content.append(summary_text)
+                        
+                        # Get all liveblog entries
+                        entries = soup.select('.timeline-item')
+                        for entry in entries:
+                            # Extract timestamp
+                            timestamp = entry.select_one('.timeline-item__time')
+                            if timestamp:
+                                time_text = timestamp.get_text()
+                                text_content.append(f"\n[{time_text.strip()}]\n")
+                            
+                            # Extract content
+                            entry_content = entry.select_one('.timeline-item__content')
+                            if entry_content:
+                                # Get headers
+                                headers = entry_content.find_all(['h2', 'h3', 'h4'])
+                                for header in headers:
+                                    header_text = header.get_text()
+                                    text_content.append(f"\n## {header_text.strip()}\n")
+                                
+                                # Get paragraphs
+                                paragraphs = entry_content.find_all('p')
+                                for p in paragraphs:
+                                    p_text = p.get_text()
+                                    if p_text.strip():
+                                        text_content.append(p_text.strip())
+                                
+                                # Get list items
+                                list_items = entry_content.find_all('li')
+                                for item in list_items:
+                                    item_text = item.get_text()
+                                    if item_text.strip():
+                                        text_content.append(f"• {item_text.strip()}")
+                    else:
+                        # Regular article handling
+                        elements = content.find_all(['h2', 'h3', 'p', 'li'])
+                        for element in elements:
+                            if element.name in ['h2', 'h3']:
+                                text_content.append(f"\n## {element.get_text().strip()}\n")
+                            elif element.name == 'li':
+                                text_content.append(f"• {element.get_text().strip()}")
+                            else:
+                                text_content.append(element.get_text().strip())
+                    
+                    return self._filter_content('\n\n'.join(text for text in text_content if text.strip()))
+            
+            # Fallback to general selectors
+            content_selectors = [
+                '[class*="wysiwyg"]',
+                'article',
+                '[role="article"]',
+                '.article-content',
+                '.article-body',
+                '.story-content',
+                '#article-body',
+                '.post-content',
+                'main'
+            ]
+            
+            content = None
+            for selector in content_selectors:
+                content_element = soup.select_one(selector)
+                if content_element:
+                    content = content_element
+                    break
+            
+            if not content:
+                content = soup.find('body')
+            
+            if not content:
+                raise ValueError("Could not find article content")
+            
+            elements = content.find_all(['h2', 'h3', 'p'])
+            for element in elements:
+                if element.name in ['h2', 'h3']:
+                    text_content.append(f"\n## {element.get_text().strip()}\n")
+                else:
+                    text_content.append(element.get_text().strip())
+            
+            final_content = '\n\n'.join(text for text in text_content if text.strip())
+            
+            if not final_content:
+                raise ValueError("No text content found in article")
+            
+            return self._filter_content(final_content)
+            
+        except requests.exceptions.RequestException as e:
+            raise ValueError(f"Failed to fetch article: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Failed to extract article content: {str(e)}")

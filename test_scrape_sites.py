@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 import json
 from typing import List
 from pydantic import BaseModel
+import os
+from pathlib import Path
+from playwright.async_api import async_playwright
 
 from app.services.news_extraction_service import NewsExtractionService
 from app.database import get_db, async_session
@@ -107,6 +110,8 @@ class BatchScraper:
                 
                 Exclude articles about weather, sports, entertainment, or general human interest stories unless they directly relate to government activities, criminal investigations/activities, or the other topics listed previously.
                 
+                MAKE SURE TO INCLUDE ANY LIVEBLOG ARTICLES FOUND IF THEY ARE RELEVANT TO THE TOPICS LISTED ABOVE.
+
                 For each relevant article, return its title, heading, and URL in the specified format."""
             }
         }
@@ -153,55 +158,249 @@ class BatchScraper:
             print(f"Error in batch scraping: {type(e).__name__}: {str(e)}")
             raise
 
-async def scrape_and_store_news():
-    """Scrape news articles and store them in the database."""
-    async for session in get_db():
+async def scrape_liveblog_content(url: str, filtered_phrases: List[str]) -> str:
+    """Test function to scrape liveblog content using Playwright"""
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
         try:
-            # Initialize batch scraper
-            scraper = BatchScraper(api_url="http://localhost:3002/v1")
+            page = await browser.new_page()
+            await page.set_viewport_size({"width": 1920, "height": 1080})
             
-            # Target URLs to scrape
-            urls = [
-                "https://www.local3news.com",
-                "https://www.propublica.org/",
-                "https://www.aljazeera.com/",
-                "https://apnews.com/"
-            ]
+            # Navigate to the URL and wait for content
+            await page.goto(url)
             
-            # Get all articles in one batch request
-            articles = scraper.extract_articles_batch(urls)
-            print(f"Retrieved {len(articles)} articles in total")
+            # Wait for the main content container
+            await page.wait_for_selector('.wysiwyg-content', timeout=30000)
+            
+            # Click "Read more" button if it exists
+            try:
+                read_more_button = await page.wait_for_selector('button:has-text("Read more")', timeout=5000)
+                if read_more_button:
+                    await read_more_button.click()
+                    await page.wait_for_timeout(1000)
+            except:
+                pass
+            
+            text_content = []
+            
+            # Get the main headline/title
+            main_title = await page.query_selector('h1')
+            if main_title:
+                title_text = await main_title.text_content()
+                text_content.append(f"# {title_text.strip()}\n")
+            
+            # Get the summary content
+            summary = await page.query_selector('.wysiwyg-content')
+            if summary:
+                summary_text = await summary.text_content()
+                if summary_text.strip():
+                    text_content.append("SUMMARY:")
+                    text_content.append(summary_text.strip())
+            
+            # Get all liveblog entries
+            entries = await page.query_selector_all('.timeline-item')
+            
+            for entry in entries:
+                # Extract timestamp
+                timestamp = await entry.query_selector('.timeline-item__time')
+                if timestamp:
+                    time_text = await timestamp.text_content()
+                    text_content.append(f"\n[{time_text.strip()}]\n")
+                
+                # Extract content
+                content = await entry.query_selector('.timeline-item__content')
+                if content:
+                    # Get headers
+                    headers = await content.query_selector_all('h2, h3, h4')
+                    for header in headers:
+                        header_text = await header.text_content()
+                        if (header_text.strip() and 
+                            not any(phrase in header_text.lower() for phrase in filtered_phrases)):
+                            text_content.append(f"\n## {header_text.strip()}\n")
+                    
+                    # Get paragraphs
+                    paragraphs = await content.query_selector_all('p')
+                    for p in paragraphs:
+                        p_text = await p.text_content()
+                        if (p_text.strip() and 
+                            not any(phrase in p_text.lower() for phrase in filtered_phrases)):
+                            text_content.append(p_text.strip())
+                    
+                    # Get list items
+                    list_items = await content.query_selector_all('li')
+                    for item in list_items:
+                        item_text = await item.text_content()
+                        if (item_text.strip() and 
+                            not any(phrase in item_text.lower() for phrase in filtered_phrases)):
+                            text_content.append(f"• {item_text.strip()}")
+            
+            # If no timeline items found, try to get content from wysiwyg sections
+            if not entries:
+                wysiwyg_content = await page.query_selector_all('.wysiwyg-content h2, .wysiwyg-content h3, .wysiwyg-content p, .wysiwyg-content li')
+                for content in wysiwyg_content:
+                    tag_name = await content.evaluate('element => element.tagName.toLowerCase()')
+                    content_text = await content.text_content()
+                    
+                    if (content_text.strip() and 
+                        not any(phrase in content_text.lower() for phrase in filtered_phrases)):
+                        if tag_name in ['h2', 'h3']:
+                            text_content.append(f"\n## {content_text.strip()}\n")
+                        elif tag_name == 'li':
+                            text_content.append(f"• {content_text.strip()}")
+                        else:
+                            text_content.append(content_text.strip())
+            
+            # Remove duplicate paragraphs that are next to each other
+            filtered_content = []
+            prev_content = None
+            for content in text_content:
+                if content != prev_content:
+                    filtered_content.append(content)
+                prev_content = content
+            
+            return '\n\n'.join(filtered_content)
+            
+        finally:
+            await browser.close()
+
+async def scrape_and_store_news():
+    """Scrape news articles and store them in a test output file."""
+    # Define common filtered phrases for all scraping
+    filtered_phrases = [
+        "Support ProPublica’s investigative reporting today.",
+        "Donate Now",
+        "We’re trying something new.",
+        "was it helpful",
+        "recommended stories",
+        "Do You Work for the Federal Government? ProPublica Wants to Hear From You.",
+        "propublica wants to hear from you",
+        "We’re expanding our coverage of government agencies and federal policy",
+        "with your help, we can dig deeper",
+        "Read More",
+        # Al Jazeera video player phrases
+        "watch below",
+        "chapters",
+        "descriptions off",
+        "captions settings",
+        "captions off",
+        "this is a modal window",
+        "beginning of dialog window",
+        "end of dialog window",
+        "escape will cancel",
+        "modal can be closed",
+        "activating the close button",
+        "selected",
+        "opens captions settings dialog"
+    ]
+
+    try:
+        # Initialize batch scraper and news extraction service
+        scraper = BatchScraper(api_url="http://localhost:3002/v1")
+        news_service = NewsExtractionService(api_url="http://localhost:3002/v1", filtered_phrases=filtered_phrases)
+        
+        # Create output directory if it doesn't exist
+        output_dir = Path("test_output")
+        output_dir.mkdir(exist_ok=True)
+        
+        # Target URLs to scrape
+        urls = [
+            "https://www.local3news.com",
+            "https://www.propublica.org/",
+            "https://www.aljazeera.com/",
+            "https://apnews.com/"
+        ]
+        
+        # Get all articles in one batch request
+        articles = scraper.extract_articles_batch(urls)
+        print(f"Retrieved {len(articles)} articles in total")
+        
+        # Create a test output file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = output_dir / f"scraped_articles_{timestamp}.txt"
+        
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(f"Scraping Results - {datetime.now()}\n")
+            f.write("=" * 80 + "\n\n")
             
             # Store articles
-            for article in articles:
-                # Check if the article already exists
-                query = select(NewsArticle).where(NewsArticle.url == article.url)
-                result = await session.execute(query)
-                if result.scalar_one_or_none():
-                    print(f"Skipping existing article: {article.title}")
-                    continue
+            for i, article in enumerate(articles, 1):
+                print(f"Processing article {i}/{len(articles)}: {article.title}")
+                
+                f.write(f"Article {i}:\n")
+                f.write(f"Title: {article.title}\n")
+                f.write(f"Heading: {article.heading}\n")
+                f.write(f"URL: {article.url}\n")
+                f.write(f"Source: {next(url for url in urls if url in article.url)}\n")
+                
+                try:
+                    # Check if it's a liveblog
+                    if 'liveblog' in article.url.lower():
+                        print(f"Detected liveblog: {article.url}")
+                        content = await scrape_liveblog_content(article.url, filtered_phrases=filtered_phrases)
+                    else:
+                        # Use regular scraping for non-liveblog articles
+                        content = await news_service.scrape_article_content(article.url)
+                    
+                    # Filter out unwanted phrases from the content
+                    filtered_content = content
+                    for phrase in filtered_phrases:
+                        filtered_content = filtered_content.replace(phrase.lower(), '')
+                        filtered_content = filtered_content.replace(phrase.capitalize(), '')
+                        filtered_content = filtered_content.replace(phrase.upper(), '')
+                    
+                    # Clean up any double newlines or spaces created by filtering
+                    filtered_content = '\n'.join(line.strip() for line in filtered_content.split('\n') if line.strip())
+                    
+                    f.write("\nContent:\n")
+                    f.write("-" * 40 + "\n")
+                    f.write(filtered_content)
+                    f.write("\n" + "-" * 40 + "\n")
+                except Exception as e:
+                    f.write(f"\nError scraping content: {str(e)}\n")
+                
+                f.write("\n" + "=" * 80 + "\n\n")
+                
+                # Add a small delay between requests to be polite
+                await asyncio.sleep(2)
+        
+        print(f"Results written to: {output_file}")
+        
+        # Database operations commented out for testing
+        """
+        async for session in get_db():
+            try:
+                for article in articles:
+                    # Check if the article already exists
+                    query = select(NewsArticle).where(NewsArticle.url == article.url)
+                    result = await session.execute(query)
+                    if result.scalar_one_or_none():
+                        print(f"Skipping existing article: {article.title}")
+                        continue
 
-                print(f"Storing new article: {article.title}")
-                print(f"Article URL: {article.url}")
+                    print(f"Storing new article: {article.title}")
+                    print(f"Article URL: {article.url}")
 
-                # Create a new NewsArticle instance with explicit timezone handling
-                news_article = NewsArticle(
-                    title=article.title,
-                    heading=article.heading,
-                    url=article.url,
-                    source_site=next(url for url in urls if url in article.url),
-                    # Let the model handle the timestamp with its default value
-                    scraped_at=datetime.now(timezone.utc)
-                )
-                session.add(news_article)
+                    news_article = NewsArticle(
+                        title=article.title,
+                        heading=article.heading,
+                        url=article.url,
+                        source_site=next(url for url in urls if url in article.url),
+                        scraped_at=datetime.now(timezone.utc)
+                    )
+                    session.add(news_article)
+                
+                await session.commit()
+                print("News articles scraped and stored successfully.")
+                
+            except Exception as e:
+                print(f"Error during scraping and storing: {str(e)}")
+                await session.rollback()
+                raise
+        """
             
-            await session.commit()
-            print("News articles scraped and stored successfully.")
-            
-        except Exception as e:
-            print(f"Error during scraping and storing: {str(e)}")
-            await session.rollback()
-            raise
+    except Exception as e:
+        print(f"Error during scraping: {str(e)}")
+        raise
 
 async def main():
     try:

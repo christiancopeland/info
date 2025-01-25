@@ -173,6 +173,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     # Get the API key from Redis first (faster)
                     redis_key = f"openai_key:{user_id}"
+                    # Clear any existing cached key
+                    redis_client.delete(redis_key)
                     api_key = redis_client.get(redis_key)
                     
                     if not api_key:

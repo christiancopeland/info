@@ -7,6 +7,9 @@ class ProjectWorkspace {
         
         this.setupEventListeners();
         this.initializeDocumentControls();
+        
+        // Initialize resizable panels
+        this.resizablePanel = new ResizablePanel();
     }
 
     setupEventListeners() {
@@ -138,6 +141,88 @@ class ProjectWorkspace {
                 }
             });
         }
+    }
+}
+
+class ResizablePanel {
+    constructor() {
+        this.initializeResizablePanels();
+    }
+
+    initializeResizablePanels() {
+        // Add resize handles to the document panel and context panel
+        const panels = [
+            {
+                panel: document.getElementById('documentPanel'),
+                minWidth: 250,
+                maxWidth: 500
+            },
+            {
+                panel: document.getElementById('contextPanel'),
+                minWidth: 250,
+                maxWidth: 500
+            }
+        ];
+
+        // Get chat panel for fluid resizing
+        this.chatPanel = document.querySelector('.chat-panel');
+        this.workspaceGrid = document.querySelector('.workspace-grid');
+        
+        panels.forEach(({ panel, minWidth, maxWidth }) => {
+            if (!panel) return;
+            
+            const handle = document.createElement('div');
+            handle.className = 'resize-handle';
+            panel.appendChild(handle);
+            
+            this.setupResizeHandlers(handle, panel, minWidth, maxWidth);
+        });
+    }
+
+    setupResizeHandlers(handle, panel, minWidth, maxWidth) {
+        let startX, startWidth, startTotalWidth;
+        const isLeftPanel = panel.id === 'documentPanel';
+
+        const startResize = (e) => {
+            startX = e.clientX;
+            startWidth = panel.offsetWidth;
+            startTotalWidth = this.workspaceGrid.offsetWidth;
+            handle.classList.add('dragging');
+            document.addEventListener('mousemove', resize);
+            document.addEventListener('mouseup', stopResize);
+            document.body.style.userSelect = 'none';
+        };
+
+        const resize = (e) => {
+            const diff = e.clientX - startX;
+            let newWidth = isLeftPanel ? 
+                startWidth + diff : 
+                startWidth - diff;
+            
+            // Enforce min/max width
+            newWidth = Math.max(minWidth, Math.min(newWidth, maxWidth));
+            
+            // Calculate how much width changed
+            const widthDiff = newWidth - panel.offsetWidth;
+            
+            // Update panel width
+            panel.style.width = `${newWidth}px`;
+            
+            // Update chat panel width to maintain fluid layout
+            if (this.chatPanel) {
+                const currentChatWidth = this.chatPanel.offsetWidth;
+                this.chatPanel.style.width = `${currentChatWidth - widthDiff}px`;
+            }
+        };
+
+        const stopResize = () => {
+            handle.classList.remove('dragging');
+            document.removeEventListener('mousemove', resize);
+            document.removeEventListener('mouseup', stopResize);
+            document.body.style.userSelect = '';
+        };
+
+        handle.addEventListener('mousedown', startResize);
     }
 }
 

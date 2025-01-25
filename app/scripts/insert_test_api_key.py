@@ -8,8 +8,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
+from dotenv import load_dotenv
 
 from pydantic_settings import BaseSettings
+
+# Load .env file from two directories up
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+load_dotenv(dotenv_path)
 
 class Settings(BaseSettings):
     # Configuration variables
@@ -87,9 +92,12 @@ async_session = sessionmaker(
 
 
 # Test user constants
-API_KEY = "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"
+API_KEY = os.getenv("OPENAI_API_KEY")
+print(f"Loaded API_KEY: {API_KEY}")  # Debug print
+if not API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable is not set")
 TEST_EMAIL = "test@test.com"
-TEST_USER_ID = "aa5c38ff-7fb4-41d0-9fb3-ed2d67d3b4c3" 
+TEST_USER_ID = "aa5c38ff-7fb4-41d0-9fb3-ed2d67d3b4c3"
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -100,6 +108,7 @@ redis_client = redis.Redis(
 
 async def insert_api_key():
     async with async_session() as session:
+        print(f"Using API_KEY: {API_KEY}")  # Debug print
         # Try to find existing user first
         result = await session.execute(
             select(User).where(User.email == TEST_EMAIL)
@@ -107,17 +116,16 @@ async def insert_api_key():
         user = result.scalar_one_or_none()
         
         if not user:
-            # Create new user with specific user_id
+            print("Creating new user")  # Debug print
             user = User(
                 user_id=uuid.UUID(TEST_USER_ID),
                 email=TEST_EMAIL,
-                password_hash="test_hash",  # You should use a proper hash in production
+                password_hash="test_hash",
                 openai_api_key=API_KEY
             )
             session.add(user)
         else:
-            # Update existing user
-            user.user_id = uuid.UUID(TEST_USER_ID)  # Update user_id
+            print("Updating existing user")  # Debug print
             user.openai_api_key = API_KEY
         
         try:
@@ -125,13 +133,13 @@ async def insert_api_key():
             print(f"User created/updated with ID: {TEST_USER_ID}")
             print(f"API key stored in database for user {TEST_EMAIL}")
             
-            # Store in Redis
-            redis_client.setex(
-                f"openai_key:{TEST_USER_ID}",  # Use user_id as Redis key
-                2592000,  # 30 days
-                API_KEY.encode()  # Make sure to encode the API key
-            )
-            print(f"API key stored in Redis with user_id: {TEST_USER_ID}")
+            # # Store in Redis
+            # redis_client.setex(
+            #     f"openai_key:{TEST_USER_ID}",  # Use user_id as Redis key
+            #     2592000,  # 30 days
+            #     API_KEY.encode()  # Make sure to encode the API key
+            # )
+            # print(f"API key stored in Redis with user_id: {TEST_USER_ID}")
             
             # Verify the data
             result = await session.execute(
@@ -142,7 +150,7 @@ async def insert_api_key():
                 print("\nVerification successful:")
                 print(f"User ID: {verified_user.user_id}")
                 print(f"Email: {verified_user.email}")
-                print(f"Has API Key: {bool(verified_user.openai_api_key)}")
+                print(f"Has API Key: {verified_user.openai_api_key}")
             else:
                 print("Warning: Could not verify user after insert/update")
                 

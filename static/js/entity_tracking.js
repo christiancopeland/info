@@ -7,10 +7,33 @@ const NETWORK_COLORS = {
 
 class EntityTracker {
     constructor() {
-        this.entityList = document.getElementById('entityList');
-        this.setupUI();
-        this.setupEventListeners();
-        this.loadEntities();
+        this.setupTabListener();
+    }
+
+    setupTabListener() {
+        // Listen for clicks on the Entity tab button
+        const entityTabButton = document.querySelector('.tab-button[data-tab="entityTab"]');
+        if (entityTabButton) {
+            entityTabButton.addEventListener('click', () => {
+                // Clear news feed content while preserving structure
+                const newsFeed = document.getElementById('newsFeed');
+                if (newsFeed) {
+                    newsFeed.innerHTML = ''; // Clear only the inner content
+                }
+                
+                // Ensure entity list container exists
+                const entityTab = document.getElementById('entityTab');
+                if (entityTab && !document.getElementById('entityList')) {
+                    entityTab.innerHTML = '<div class="entity-list" id="entityList"></div>';
+                }
+                
+                // Initialize entity tracking interface
+                this.entityList = document.getElementById('entityList');
+                this.setupUI();
+                this.setupEventListeners();
+                this.loadEntities();
+            });
+        }
     }
 
     setupUI() {
@@ -285,6 +308,8 @@ class EntityTracker {
                         <i class="fas fa-arrow-left"></i> Back
                     </button>
                 </div>
+                
+                <!-- Always visible sections -->
                 <div class="network-visualization"></div>
                 <div class="central-entities">
                     <h4>Most Connected Entities:</h4>
@@ -297,30 +322,44 @@ class EntityTracker {
                         `).join('')}
                     </ul>
                 </div>
+
+                <!-- Collapsible relationships section -->
                 <div class="relationship-details">
+                    <div class="relationships-section-header">
+                        <h4>Detailed Relationships</h4>
+                        <button class="toggle-all-btn" onclick="entityTracker.toggleAllRelationships()">
+                            <i class="fas fa-expand-alt"></i> Expand All
+                        </button>
+                    </div>
                     ${network.edges.map(edge => {
                         const normalizedWeight = normalizeWeight(edge.weight);
                         const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
                         const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
                         return `
-                            <div class="relationship-item">
-                                <div class="relationship-entities">
-                                    ${sourceId} ↔ ${targetId}
-                                </div>
-                                <div class="relationship-strength">
-                                    <div class="strength-bar-container">
-                                        <div class="strength-bar" style="width: ${formatPercent(normalizedWeight)}"></div>
-                                        <span class="strength-label">${formatPercent(normalizedWeight)}</span>
+                            <div class="relationship-item collapsed">
+                                <div class="relationship-header" onclick="entityTracker.toggleRelationship(this)">
+                                    <div class="relationship-summary">
+                                        <span class="relationship-entities">${sourceId} ↔ ${targetId}</span>
                                     </div>
+                                    <i class="fas fa-chevron-down toggle-icon"></i>
                                 </div>
-                                ${edge.contexts ? `
-                                    <div class="relationship-contexts">
-                                        <strong>Example contexts:</strong>
-                                        ${edge.contexts.slice(0, 2).map(ctx => `
-                                            <div class="context-item">${ctx.context || 'No context available'}</div>
-                                        `).join('')}
+                                <div class="relationship-content">
+                                    <div class="relationship-strength">
+                                        <div class="strength-bar-container">
+                                            <div class="strength-bar" style="width: ${formatPercent(normalizedWeight)}">
+                                                <span class="strength-label">${formatPercent(normalizedWeight)}</span>
+                                            </div>
+                                        </div>
                                     </div>
-                                ` : ''}
+                                    ${edge.contexts ? `
+                                        <div class="relationship-contexts">
+                                            <strong>Shared Contexts:</strong>
+                                            ${edge.contexts.slice(0, 2).map(ctx => `
+                                                <div class="context-item">${ctx.context || 'No context available'}</div>
+                                            `).join('')}
+                                        </div>
+                                    ` : ''}
+                                </div>
                             </div>
                         `;
                     }).join('')}
@@ -450,6 +489,39 @@ class EntityTracker {
             event.subject.fx = null;
             event.subject.fy = null;
         }
+    }
+
+    toggleRelationship(headerElement) {
+        const item = headerElement.closest('.relationship-item');
+        const icon = headerElement.querySelector('.toggle-icon');
+        
+        item.classList.toggle('collapsed');
+        icon.classList.toggle('fa-chevron-down');
+        icon.classList.toggle('fa-chevron-up');
+    }
+
+    toggleAllRelationships() {
+        const button = document.querySelector('.toggle-all-btn');
+        const items = document.querySelectorAll('.relationship-item');
+        const isExpanding = button.innerHTML.includes('Expand');
+        
+        items.forEach(item => {
+            const icon = item.querySelector('.toggle-icon');
+            if (isExpanding) {
+                item.classList.remove('collapsed');
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+            } else {
+                item.classList.add('collapsed');
+                icon.classList.add('fa-chevron-down');
+                icon.classList.remove('fa-chevron-up');
+            }
+        });
+        
+        // Update button text and icon
+        button.innerHTML = isExpanding ? 
+            '<i class="fas fa-compress-alt"></i> Collapse All' : 
+            '<i class="fas fa-expand-alt"></i> Expand All';
     }
 }
 
