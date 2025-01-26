@@ -135,9 +135,8 @@ class EntityTrackingService:
             raise
 
     async def _scan_existing_documents(self, entity: TrackedEntity):
-        """Scan existing documents for entity mentions"""
+        """Scan existing documents and news articles for entity mentions"""
         try:
-            # Simple debug file with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             debug_file = f"entity_scan_{timestamp}.log"
             
@@ -147,8 +146,10 @@ class EntityTrackingService:
                 f.write(f"Entity Scan Debug Log for: {entity.name}\n")
                 f.write("=" * 80 + "\n\n")
                 
+                mentions_added = 0
+                
                 # Get all documents for this user's projects
-                query = text("""
+                doc_query = text("""
                     SELECT d.document_id, d.raw_content, d.folder_id, d.filename
                     FROM documents d
                     JOIN project_folders f ON d.folder_id = f.folder_id
@@ -157,21 +158,33 @@ class EntityTrackingService:
                     AND p.owner_id = :user_id
                 """)
                 
-                result = await self.session.execute(query, {"user_id": entity.user_id})
-                documents = result.fetchall()
+                # Get all news articles
+                news_query = text("""
+                    SELECT id as document_id, content as raw_content, title as filename
+                    FROM news_articles
+                    WHERE content IS NOT NULL
+                """)
                 
-                mentions_added = 0
-                for doc in documents:
-                    content = doc.raw_content
+                # Execute both queries
+                doc_result = await self.session.execute(doc_query, {"user_id": entity.user_id})
+                news_result = await self.session.execute(news_query)
+                
+                # Combine results
+                documents = list(doc_result.fetchall())
+                news_articles = list(news_result.fetchall())
+                
+                f.write(f"Found {len(documents)} documents and {len(news_articles)} news articles to scan\n")
+                
+                # Process both documents and news articles
+                for item in documents + news_articles:
+                    content = item.raw_content
                     if not content:
                         continue
                     
-                    # Write document info
-                    f.write(f"\nDocument: {doc.filename}\n")
+                    # Write item info
+                    f.write(f"\nScanning: {item.filename}\n")
                     f.write(f"Content Length: {len(content)} chars\n")
                     f.write("-" * 80 + "\n\n")
-                    f.write(content)
-                    f.write("\n" + "-" * 80 + "\n")
                     
                     # Count occurrences
                     content_lower = content.lower()
@@ -189,10 +202,10 @@ class EntityTrackingService:
                             
                             mention = EntityMention(
                                 entity_id=entity.entity_id,
-                                document_id=doc.document_id,
+                                document_id=item.document_id,
                                 user_id=entity.user_id,
                                 context=context,
-                                chunk_id=f"{doc.document_id}_0"
+                                chunk_id=f"{item.document_id}_0"
                             )
                             self.session.add(mention)
                             mentions_added += 1

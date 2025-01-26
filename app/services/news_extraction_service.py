@@ -6,6 +6,8 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
+import asyncio
+import time
 
 class Article(BaseModel):
     title: str
@@ -30,6 +32,20 @@ class FirecrawlResponse(BaseModel):
     success: bool
     data: FirecrawlData
 
+class BatchResponse(BaseModel):
+    success: bool
+    id: str
+    url: str
+
+class BatchResultResponse(BaseModel):
+    success: bool
+    status: str
+    completed: int
+    total: int
+    creditsUsed: int
+    expiresAt: str
+    data: List[FirecrawlData]
+
 class NewsExtractionService:
     def __init__(self, api_url: str, api_key: str = None, filtered_phrases: List[str] = None):
         self.api_url = api_url
@@ -38,12 +54,22 @@ class NewsExtractionService:
         }
         if api_key:
             self.headers["Authorization"] = f"Bearer {api_key}"
+            
+        # Add default news sources
+        self.default_sources = [
+            "https://www.local3news.com",
+            "https://www.propublica.org",
+            "https://apnews.com",
+            "https://www.aljazeera.com"
+        ]
+        
         # Add common headers to mimic a browser
         self.scraper_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         }
+        
         # Default filtered phrases if none provided
         self.filtered_phrases = filtered_phrases or [
             "support propublica's investigative reporting",
@@ -83,7 +109,14 @@ class NewsExtractionService:
         # Clean up any double newlines or spaces created by filtering
         return '\n'.join(line.strip() for line in filtered_content.split('\n') if line.strip())
 
-    def extract_articles(self, target_url: str) -> List[Article]:
+    def extract_articles(self, target_url: str, force_scrape: bool = False) -> List[Article]:
+        """
+        Extract articles from a target URL.
+        
+        Args:
+            target_url: The URL to extract articles from
+            force_scrape: If True, bypass any caching and force new extraction
+        """
         payload = {
             "url": target_url,
             "formats": ["extract"],
@@ -131,7 +164,8 @@ class NewsExtractionService:
             },
             "timeout": 30000,
             "removeBase64Images": True,
-            "waitFor": 500
+            "waitFor": 500,
+            "forceScrape": force_scrape
         }
 
         try:
@@ -284,14 +318,20 @@ class NewsExtractionService:
             finally:
                 await browser.close()
 
-    async def scrape_article_content(self, url: str) -> str:
+    async def scrape_article_content(self, url: str, force_scrape: bool = False) -> str:
         """
         Scrape the main content from a news article URL.
-        Returns the extracted text content or raises ValueError if extraction fails.
+        
+        Args:
+            url: The URL to scrape
+            force_scrape: If True, bypass any caching and force a new scrape
+        
+        Returns:
+            The extracted text content
         """
         try:
-            # Check if it's a liveblog
-            if 'liveblog' in url.lower():
+            # Check if it's a liveblog or if force_scrape is True
+            if force_scrape or 'liveblog' in url.lower():
                 return await self.scrape_liveblog_content(url)
 
             # Regular article scraping logic continues...
@@ -412,3 +452,134 @@ class NewsExtractionService:
             raise ValueError(f"Failed to fetch article: {str(e)}")
         except Exception as e:
             raise ValueError(f"Failed to extract article content: {str(e)}")
+
+    async def scrape_default_sources(self) -> dict:
+        """Scrape all default news sources."""
+        results = {
+            "processed": 0,
+            "failed": 0,
+            "sources": {}
+        }
+        
+        for source_url in self.default_sources:
+            try:
+                articles = await self.extract_articles(source_url, force_scrape=True)
+                results["processed"] += len(articles)
+                results["sources"][source_url] = {
+                    "status": "success",
+                    "articles": len(articles)
+                }
+            except Exception as e:
+                results["failed"] += 1
+                results["sources"][source_url] = {
+                    "status": "failed",
+                    "error": str(e)
+                }
+                
+            # Add a small delay between sources to be polite
+            await asyncio.sleep(2)
+        
+        return results
+
+    def extract_articles_batch(self, urls: List[str], max_retries: int = 10, retry_delay: int = 2) -> List[Article]:
+        """
+        Extract articles from multiple URLs in a single batch request.
+        
+        Args:
+            urls: List of URLs to scrape
+            max_retries: Maximum number of times to retry checking batch status
+            retry_delay: Delay in seconds between status checks
+            
+        Returns:
+            List of Article objects
+        """
+        batch_payload = {
+            "urls": urls,
+            "formats": ["extract"],
+            "onlyMainContent": True,
+            "extract": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "articles": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "heading": {"type": "string"},
+                                    "url": {"type": "string"}
+                                },
+                                "required": ["title", "heading", "url"]
+                            }
+                        }
+                    },
+                    "required": ["articles"]
+                },
+                "systemPrompt": """You are a specialized news article extractor.
+                Extract articles that cover:
+                - Political activities and developments
+                - Criminal cases, investigations, and law enforcement
+                - Government operations, policies, and decisions
+                - Public corruption or misconduct
+                - Legislative updates and regulatory changes
+                - Court proceedings and legal matters
+                
+                Don't neglect any of the above, but feel free to include other relevant news articles as well.""",
+                
+                "prompt": """Analyze the webpage and extract news articles related to:
+                1. Political events and developments
+                2. Criminal activities, investigations, law enforcement, and any general crime news
+                3. Government operations and policy changes
+                4. Public official activities and decisions
+                5. Court cases and legal proceedings
+                
+                Exclude articles about weather, sports, entertainment, or general human interest stories unless they directly relate to government activities, criminal investigations/activities, or the other topics listed previously.
+                
+                MAKE SURE TO INCLUDE ANY LIVEBLOG ARTICLES FOUND IF THEY ARE RELEVANT TO THE TOPICS LISTED ABOVE.
+
+                For each relevant article, return its title, heading, and URL in the specified format."""
+            }
+        }
+
+        try:
+            # Initialize batch job
+            init_response = requests.post(
+                f"{self.api_url}/batch/scrape",
+                json=batch_payload,
+                headers=self.headers
+            )
+            init_response.raise_for_status()
+            batch_data = BatchResponse.model_validate_json(init_response.text)
+            
+            # Ensure we're using http instead of https for local development
+            result_url = batch_data.url.replace('https://', 'http://')
+            
+            print(f"Batch job initialized with ID: {batch_data.id}")
+            print(f"Results URL: {result_url}")
+
+            # Poll for results
+            for attempt in range(max_retries):
+                time.sleep(retry_delay)  # Wait before checking results
+                
+                result_response = requests.get(result_url, headers=self.headers)
+                result_response.raise_for_status()
+                
+                result_data = BatchResultResponse.model_validate_json(result_response.text)
+                
+                if result_data.status == "completed":
+                    print(f"Batch job completed. Credits used: {result_data.creditsUsed}")
+                    
+                    # Collect all articles from all responses
+                    all_articles = []
+                    for data in result_data.data:
+                        all_articles.extend(data.extract.articles)
+                    return all_articles
+                
+                print(f"Job status: {result_data.status} ({result_data.completed}/{result_data.total})")
+            
+            raise TimeoutError("Batch job did not complete within the maximum retries")
+
+        except Exception as e:
+            print(f"Error in batch scraping: {type(e).__name__}: {str(e)}")
+            raise
