@@ -8,6 +8,7 @@ class NewsFeed {
 
     async initialize() {
         this.setupSearchInterface();
+        this.setupRefreshButton();
         await this.loadNews();
         this.setupSearchListeners();
     }
@@ -186,6 +187,55 @@ class NewsFeed {
                 this.setupSearchInterface();
                 this.loadNews();
             });
+        }
+    }
+
+    setupRefreshButton() {
+        // First, check if the news header already exists
+        let newsHeader = this.newsFeed.parentNode.querySelector('.news-header');
+        if (!newsHeader) {
+            newsHeader = document.createElement('div');
+            newsHeader.className = 'news-header';
+            this.newsFeed.parentNode.insertBefore(newsHeader, this.newsFeed);
+        }
+
+        // Add refresh button if it doesn't exist
+        if (!newsHeader.querySelector('.refresh-button')) {
+            const refreshButton = document.createElement('button');
+            refreshButton.className = 'refresh-button';
+            refreshButton.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+            refreshButton.addEventListener('click', async (e) => {
+                if (refreshButton.classList.contains('loading')) return;
+                
+                refreshButton.classList.add('loading');
+                try {
+                    // Call the rescrape endpoint
+                    const response = await fetch('/api/v1/news/articles/rescrape', {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to rescrape articles');
+                    }
+                    
+                    const result = await response.json();
+                    
+                    // Show a notification with the results
+                    const message = `Rescrape completed:\n${result.processed} processed\n${result.failed} failed`;
+                    alert(message);
+                    
+                    // Reload the news feed
+                    await this.loadNews();
+                    
+                } catch (error) {
+                    console.error('Error rescraping articles:', error);
+                    alert('Failed to rescrape articles. Please try again later.');
+                } finally {
+                    refreshButton.classList.remove('loading');
+                }
+            });
+            
+            newsHeader.appendChild(refreshButton);
         }
     }
 }
