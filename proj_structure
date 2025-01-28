@@ -1,0 +1,138 @@
+.
+├── 1-23-25-nextsteps.md
+├── aljazeera.html
+├── app
+│   ├── api
+│   │   └── v1
+│   │       ├── auth
+│   │       │   ├── __init__.py
+│   │       │   ├── __pycache__
+│   │       │   │   ├── __init__.cpython-313.pyc
+│   │       │   │   └── routes.cpython-313.pyc
+│   │       │   ├── routes.py
+│   │       │   └── schemas.py
+│   │       ├── entities
+│   │       │   ├── __init__.py
+│   │       │   ├── __pycache__
+│   │       │   │   ├── __init__.cpython-313.pyc
+│   │       │   │   └── routes.cpython-313.pyc
+│   │       │   ├── routes.py
+│   │       │   └── schemas.py
+│   │       ├── news
+│   │       │   ├── __init__.py
+│   │       │   ├── __pycache__
+│   │       │   │   ├── __init__.cpython-313.pyc
+│   │       │   │   └── routes.cpython-313.pyc
+│   │       │   ├── routes.py
+│   │       │   └── schemas.py
+│   │       ├── projects
+│   │       │   ├── __init__.py
+│   │       │   ├── __pycache__
+│   │       │   │   ├── __init__.cpython-313.pyc
+│   │       │   │   └── routes.cpython-313.pyc
+│   │       │   ├── routes.py
+│   │       │   └── schemas.py
+│   │       ├── research_assistant
+│   │       │   ├── __init__.py
+│   │       │   ├── routes.py
+│   │       │   └── schemas.py
+│   │       └── websocket
+│   │           ├── __init__.py
+│   │           ├── __pycache__
+│   │           │   ├── __init__.cpython-313.pyc
+│   │           │   └── routes.cpython-313.pyc
+│   │           ├── routes.py
+│   │           └── schemas.py
+│   ├── core
+│   │   ├── config.py
+│   │   ├── dependencies.py
+│   │   ├── exceptions.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── config.cpython-313.pyc
+│   │       ├── dependencies.cpython-313.pyc
+│   │       ├── exceptions.cpython-313.pyc
+│   │       └── __init__.cpython-313.pyc
+│   ├── database.py
+│   ├── __init__.py
+│   ├── main.py
+│   ├── models
+│   │   ├── entities.py
+│   │   ├── __init__.py
+│   │   ├── news_article.py
+│   │   ├── projectexplanation
+│   │   ├── project.py
+│   │   ├── __pycache__
+│   │   │   ├── entities.cpython-313.pyc
+│   │   │   ├── __init__.cpython-313.pyc
+│   │   │   ├── news_article.cpython-313.pyc
+│   │   │   ├── project.cpython-313.pyc
+│   │   │   └── user.cpython-313.pyc
+│   │   └── user.py
+│   ├── __pycache__
+│   │   ├── database.cpython-313.pyc
+│   │   ├── __init__.cpython-313.pyc
+│   │   └── main.cpython-313.pyc
+│   ├── scripts
+│   │   ├── add_content_column.py
+│   │   ├── add_news_article_columns.py
+│   │   ├── add_raw_content_column.py
+│   │   ├── add_updated_at_column.py
+│   │   ├── create_entity_tracking_tables.py
+│   │   ├── create_news_articles_table.py
+│   │   ├── insert_test_api_key.py
+│   │   └── test_update_owner_id.py
+│   └── services
+│       ├── auth
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-313.pyc
+│       │   │   └── security_service.cpython-313.pyc
+│       │   └── security_service.py
+│       ├── document_processorexplanation
+│       ├── document_processor.py
+│       ├── entity_tracker.py
+│       ├── news_extraction_service.py
+│       ├── project_serviceexplanation
+│       ├── project_service.py
+│       ├── __pycache__
+│       │   ├── document_processor.cpython-313.pyc
+│       │   ├── entity_tracker.cpython-313.pyc
+│       │   ├── news_extraction_service.cpython-313.pyc
+│       │   └── project_service.cpython-313.pyc
+│       ├── research_assistant.py
+│       └── scheduled_scraping.py
+├── entity_mentions_20250127_070721.log
+├── implement_news_entity_feed_conversation.txt
+├── InformationIngestion.PRD
+├── proj_structure
+├── README.md
+├── requirements.txt
+├── run_appcmd
+├── startqdrant
+├── static
+│   ├── css
+│   │   └── styles.css
+│   ├── images
+│   └── js
+│       ├── auth.js
+│       ├── chat.js
+│       ├── d3.v7.min.js
+│       ├── dashboard.js
+│       ├── document_upload.js
+│       ├── entity_tracking.js
+│       ├── main.js
+│       ├── news_feed.js
+│       ├── projects.js
+│       ├── research_sidebar.js
+│       ├── websocket.js
+│       └── workspace.js
+├── templates
+│   └── index.html
+├── test_key
+├── tests
+│   ├── extract.py
+│   └── test_knowledge_graph.py
+└── test_scrape_sites.py
+
+30 directories, 105 files
