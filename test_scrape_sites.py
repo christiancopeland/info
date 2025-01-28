@@ -264,17 +264,16 @@ async def scrape_liveblog_content(url: str, filtered_phrases: List[str]) -> str:
             await browser.close()
 
 async def scrape_and_store_news():
-    """Scrape news articles and store them in a test output file."""
-    # Define common filtered phrases for all scraping
+    """Scrape news articles and store them in a test output file and database."""
     filtered_phrases = [
-        "Support ProPublica’s investigative reporting today.",
+        "Support ProPublica's investigative reporting today.",
         "Donate Now",
-        "We’re trying something new.",
+        "We're trying something new.",
         "was it helpful",
         "recommended stories",
         "Do You Work for the Federal Government? ProPublica Wants to Hear From You.",
         "propublica wants to hear from you",
-        "We’re expanding our coverage of government agencies and federal policy",
+        "We're expanding our coverage of government agencies and federal policy",
         "with your help, we can dig deeper",
         "Read More",
         # Al Jazeera video player phrases
@@ -365,39 +364,67 @@ async def scrape_and_store_news():
         
         print(f"Results written to: {output_file}")
         
-        # Database operations commented out for testing
-        """
+        # Store articles in database
         async for session in get_db():
             try:
                 for article in articles:
                     # Check if the article already exists
                     query = select(NewsArticle).where(NewsArticle.url == article.url)
-                    result = await session.execute(query)
-                    if result.scalar_one_or_none():
+                    existing_article = await session.execute(query)
+                    existing_article = existing_article.scalar_one_or_none()
+
+                    current_time = datetime.now(timezone.utc)
+                    is_liveblog = 'liveblog' in article.url.lower()
+                    
+                    if existing_article:
                         print(f"Skipping existing article: {article.title}")
                         continue
 
-                    print(f"Storing new article: {article.title}")
-                    print(f"Article URL: {article.url}")
+                    # Get and filter content BEFORE creating the NewsArticle
+                    try:
+                        # Check if it's a liveblog
+                        if is_liveblog:
+                            content = await scrape_liveblog_content(article.url, filtered_phrases=filtered_phrases)
+                        else:
+                            content = await news_service.scrape_article_content(article.url)
+                        
+                        # Filter out unwanted phrases from the content
+                        filtered_content = content
+                        for phrase in filtered_phrases:
+                            filtered_content = filtered_content.replace(phrase.lower(), '')
+                            filtered_content = filtered_content.replace(phrase.capitalize(), '')
+                            filtered_content = filtered_content.replace(phrase.upper(), '')
+                        
+                        # Clean up any double newlines or spaces created by filtering
+                        filtered_content = '\n'.join(line.strip() for line in filtered_content.split('\n') if line.strip())
+                        
+                    except Exception as e:
+                        print(f"Error scraping content for {article.url}: {str(e)}")
+                        filtered_content = None
 
+                    print(f"Storing new article: {article.title}")
+                    print(f"Content length: {len(filtered_content) if filtered_content else 0} characters")
+                    
                     news_article = NewsArticle(
                         title=article.title,
                         heading=article.heading,
                         url=article.url,
+                        content=filtered_content,  # Now filtered_content is properly scoped
                         source_site=next(url for url in urls if url in article.url),
-                        scraped_at=datetime.now(timezone.utc)
+                        scraped_at=current_time,
+                        is_liveblog=is_liveblog,
+                        last_updated=current_time if is_liveblog else None
                     )
                     session.add(news_article)
                 
                 await session.commit()
-                print("News articles scraped and stored successfully.")
+                print("News articles stored successfully in database.")
                 
             except Exception as e:
-                print(f"Error during scraping and storing: {str(e)}")
+                print(f"Error storing articles in database: {str(e)}")
                 await session.rollback()
                 raise
-        """
-            
+
     except Exception as e:
         print(f"Error during scraping: {str(e)}")
         raise
