@@ -1,5 +1,5 @@
 from typing import Dict, Optional
-from sqlalchemy import Column, String, JSON, ForeignKey, UniqueConstraint, Index
+from sqlalchemy import Column, String, JSON, ForeignKey, UniqueConstraint, Index, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import uuid
@@ -48,12 +48,13 @@ class TrackedEntity(Base):
 
 class EntityMention(Base):
     """
-    Model for storing entity mentions in documents.
+    Model for storing entity mentions in documents and news articles.
     
     Attributes:
         mention_id (UUID): Unique identifier for the mention
         entity_id (UUID): ID of the referenced tracked entity
-        document_id (UUID): ID of the document containing the mention
+        document_id (UUID): ID of the document containing the mention (if from document)
+        news_article_id (UUID): ID of the news article containing the mention (if from news)
         user_id (UUID): ID of the user who owns this mention
         chunk_id (str): ID of the document chunk containing the mention
         context (str): Surrounding text context of the mention
@@ -63,21 +64,34 @@ class EntityMention(Base):
     
     mention_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     entity_id = Column(UUID(as_uuid=True), ForeignKey("tracked_entities.entity_id", ondelete="CASCADE"))
-    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.document_id", ondelete="CASCADE"))
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=True)
+    news_article_id = Column(UUID(as_uuid=True), ForeignKey("news_articles.id", ondelete="CASCADE"), nullable=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
     chunk_id = Column(String, nullable=False)
     context = Column(String, nullable=False)
     timestamp = Column(String, nullable=False, default=lambda: datetime.utcnow().isoformat())
     
+    __table_args__ = (
+        # Ensure at least one of document_id or news_article_id is set
+        CheckConstraint(
+            '(document_id IS NOT NULL AND news_article_id IS NULL) OR '
+            '(document_id IS NULL AND news_article_id IS NOT NULL)',
+            name='check_one_source_id'
+        ),
+    )
+    
     def __repr__(self):
-        return f"<EntityMention(entity_id='{self.entity_id}', chunk_id='{self.chunk_id}')>"
+        source_id = self.document_id or self.news_article_id
+        source_type = "document" if self.document_id else "news"
+        return f"<EntityMention(entity_id='{self.entity_id}', {source_type}_id='{source_id}')>"
     
     def to_dict(self) -> Dict:
         """Convert mention to dictionary representation"""
         return {
             "mention_id": str(self.mention_id),
             "entity_id": str(self.entity_id),
-            "document_id": str(self.document_id),
+            "document_id": str(self.document_id) if self.document_id else None,
+            "news_article_id": str(self.news_article_id) if self.news_article_id else None,
             "user_id": str(self.user_id),
             "chunk_id": self.chunk_id,
             "context": self.context,

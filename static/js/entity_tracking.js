@@ -108,6 +108,17 @@ class EntityTracker {
             }
 
             const data = await response.json();
+            
+            // Trigger a scan immediately after adding
+            console.log(`Triggering scan for entity: ${name}`);
+            const scanResponse = await fetch(`/api/v1/entities/${encodeURIComponent(name)}/scan`, {
+                method: 'POST'
+            });
+            
+            if (!scanResponse.ok) {
+                console.error('Failed to trigger entity scan');
+            }
+            
             this.addEntityToList(data);
 
             // Clear input after successful add
@@ -132,6 +143,9 @@ class EntityTracker {
                     <button class="view-relationships-btn" onclick="entityTracker.viewRelationships('${entity.name}')">
                         <i class="fas fa-project-diagram"></i>
                     </button>
+                    <button class="delete-entity-btn" onclick="entityTracker.deleteEntity('${entity.name}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
                 </div>
             </div>
         `;
@@ -140,13 +154,34 @@ class EntityTracker {
 
     async viewMentions(entityName) {
         try {
+            console.log(`Fetching mentions for: ${entityName}`);
             const response = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}/mentions`);
             if (!response.ok) {
-                throw new Error('Failed to fetch mentions');
+                throw new Error(`Failed to fetch mentions: ${response.status}`);
             }
 
             const mentions = await response.json();
-            console.log('Received mentions:', mentions); // Add this for debugging
+            console.log('Received mentions:', mentions);
+            
+            if (mentions.length === 0) {
+                console.log('No mentions found, triggering scan...');
+                // Try triggering a scan if no mentions found
+                const scanResponse = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}/scan`, {
+                    method: 'POST'
+                });
+                
+                if (scanResponse.ok) {
+                    // Fetch mentions again after scan
+                    const newResponse = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}/mentions`);
+                    if (newResponse.ok) {
+                        const newMentions = await newResponse.json();
+                        console.log('Mentions after scan:', newMentions);
+                        this.displayMentions(entityName, newMentions);
+                        return;
+                    }
+                }
+            }
+            
             this.displayMentions(entityName, mentions);
         } catch (error) {
             console.error('Error fetching mentions:', error);
@@ -183,9 +218,8 @@ class EntityTracker {
             </div>
         `;
 
-        const entityList = document.getElementById('entityList');
-        if (entityList) {
-            entityList.innerHTML = mentionsHtml;
+        if (this.entityList) {
+            this.entityList.innerHTML = mentionsHtml;
         } else {
             console.error('Entity list element not found');
         }
@@ -522,6 +556,36 @@ class EntityTracker {
         button.innerHTML = isExpanding ? 
             '<i class="fas fa-compress-alt"></i> Collapse All' : 
             '<i class="fas fa-expand-alt"></i> Expand All';
+    }
+
+    async deleteEntity(entityName) {
+        if (!confirm(`Are you sure you want to stop tracking "${entityName}"?`)) {
+            return;
+        }
+
+        try {
+            console.log(`Deleting entity: ${entityName}`);
+            const response = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to delete entity: ${response.status}`);
+            }
+
+            // Remove the entity from the UI
+            const entityElements = document.querySelectorAll('.entity-item');
+            entityElements.forEach(element => {
+                if (element.querySelector('.entity-name').textContent === entityName) {
+                    element.remove();
+                }
+            });
+
+            console.log(`Successfully deleted entity: ${entityName}`);
+        } catch (error) {
+            console.error('Error deleting entity:', error);
+            alert('Failed to delete entity. Please try again.');
+        }
     }
 }
 

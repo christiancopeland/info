@@ -4,7 +4,7 @@ from sqlalchemy import text, select
 import logging
 import uuid
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import networkx as nx
 
@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 class EntityTrackingService:
     """Service for tracking and analyzing entities across documents"""
     
-    def __init__(self, session: AsyncSession, document_processor, debug: bool = False):
+    def __init__(self, session: AsyncSession, document_processor, user_id: uuid.UUID = None, debug: bool = False):
         self.session = session
         self.document_processor = document_processor
+        self.user_id = user_id
         self.active_entities: Set[str] = set()  # Cache of currently tracked entities
         self.entity_graph = nx.Graph()
         self.debug = debug
@@ -34,7 +35,7 @@ class EntityTrackingService:
         metadata: Optional[Dict] = None,
         user_id: uuid.UUID = None
     ) -> TrackedEntity:
-        """Add a new entity to track and scan existing documents"""
+        """Add a new entity to track and scan existing documents and news articles"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         debug_file = f"entity_add_{timestamp}.log"
         
@@ -58,8 +59,8 @@ class EntityTrackingService:
                 # Add to active entities cache
                 self.active_entities.add(name.lower())
                 
-                # Get all documents
-                query = text("""
+                # Get all documents and news articles
+                doc_query = text("""
                     SELECT d.document_id, d.raw_content, d.filename
                     FROM documents d
                     JOIN project_folders f ON d.folder_id = f.folder_id
@@ -67,12 +68,22 @@ class EntityTrackingService:
                     WHERE d.raw_content IS NOT NULL
                     AND p.owner_id = :user_id
                 """)
-                
-                result = await self.session.execute(query, {"user_id": user_id})
-                documents = result.fetchall()
-                
+
+                news_query = text("""
+                    SELECT id as document_id, content as raw_content, title as filename
+                    FROM news_articles
+                    WHERE content IS NOT NULL
+                """)
+
+                doc_result = await self.session.execute(doc_query, {"user_id": user_id})
+                news_result = await self.session.execute(news_query)
+
+                documents = doc_result.fetchall()
+                news_articles = news_result.fetchall()
+
+                # Process both documents and news articles
                 mentions_added = 0
-                for doc in documents:
+                for doc in documents + news_articles:
                     content = doc.raw_content
                     if not content:
                         continue
@@ -134,137 +145,141 @@ class EntityTrackingService:
             logger.error(f"Error adding tracked entity: {str(e)}")
             raise
 
-    async def _scan_existing_documents(self, entity: TrackedEntity):
+    async def _scan_existing_documents(self, entity: TrackedEntity) -> int:
         """Scan existing documents and news articles for entity mentions"""
+        mentions_added = 0
+        
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            debug_file = f"entity_scan_{timestamp}.log"
+            # Scan news articles
+            news_query = text("""
+                SELECT id as source_id, content as raw_content
+                FROM news_articles
+                WHERE content IS NOT NULL
+            """)
             
-            logger.debug(f"Writing debug log to: {debug_file}")
+            news_result = await self.session.execute(news_query)
+            news_articles = news_result.fetchall()
             
-            with open(debug_file, "w", encoding="utf-8") as f:
-                f.write(f"Entity Scan Debug Log for: {entity.name}\n")
-                f.write("=" * 80 + "\n\n")
-                
-                mentions_added = 0
-                
-                # Get all documents for this user's projects
-                doc_query = text("""
-                    SELECT d.document_id, d.raw_content, d.folder_id, d.filename
-                    FROM documents d
-                    JOIN project_folders f ON d.folder_id = f.folder_id
-                    JOIN research_projects p ON f.project_id = p.project_id
-                    WHERE d.raw_content IS NOT NULL
-                    AND p.owner_id = :user_id
-                """)
-                
-                # Get all news articles
-                news_query = text("""
-                    SELECT id as document_id, content as raw_content, title as filename
-                    FROM news_articles
-                    WHERE content IS NOT NULL
-                """)
-                
-                # Execute both queries
-                doc_result = await self.session.execute(doc_query, {"user_id": entity.user_id})
-                news_result = await self.session.execute(news_query)
-                
-                # Combine results
-                documents = list(doc_result.fetchall())
-                news_articles = list(news_result.fetchall())
-                
-                f.write(f"Found {len(documents)} documents and {len(news_articles)} news articles to scan\n")
-                
-                # Process both documents and news articles
-                for item in documents + news_articles:
-                    content = item.raw_content
-                    if not content:
-                        continue
-                    
-                    # Write item info
-                    f.write(f"\nScanning: {item.filename}\n")
-                    f.write(f"Content Length: {len(content)} chars\n")
-                    f.write("-" * 80 + "\n\n")
-                    
-                    # Count occurrences
-                    content_lower = content.lower()
-                    entity_lower = entity.name.lower()
-                    total_occurrences = content_lower.count(entity_lower)
-                    
-                    f.write(f"\nFound {total_occurrences} occurrences of '{entity.name}'\n")
-                    
-                    if total_occurrences > 0:
-                        contexts = self._extract_context(content, entity.name)
-                        f.write(f"\nExtracted {len(contexts)} contexts:\n")
-                        
-                        for i, context in enumerate(contexts, 1):
-                            f.write(f"\nContext #{i}:\n{context}\n")
-                            
-                            mention = EntityMention(
-                                entity_id=entity.entity_id,
-                                document_id=item.document_id,
-                                user_id=entity.user_id,
-                                context=context,
-                                chunk_id=f"{item.document_id}_0"
-                            )
-                            self.session.add(mention)
-                            mentions_added += 1
-                
-                await self.session.commit()
-                f.write("\n" + "=" * 80 + "\n")
-                f.write(f"Total mentions added: {mentions_added}\n")
+            for article in news_articles:
+                mentions = await self._find_mentions_in_text(
+                    entity.name,
+                    article.raw_content,
+                    article.source_id
+                )
+                for context, chunk_id in mentions:
+                    await self.add_mention(
+                        entity_id=entity.entity_id,
+                        source_id=article.source_id,
+                        is_news_article=True,
+                        context=context,
+                        chunk_id=chunk_id
+                    )
+                    mentions_added += 1
             
-            logger.info(f"Debug log written to: {debug_file}")
+            # Scan documents (if you have any)
+            doc_query = text("""
+                SELECT document_id as source_id, raw_content
+                FROM documents
+                WHERE raw_content IS NOT NULL
+            """)
+            
+            doc_result = await self.session.execute(doc_query)
+            documents = doc_result.fetchall()
+            
+            for doc in documents:
+                mentions = await self._find_mentions_in_text(
+                    entity.name,
+                    doc.raw_content,
+                    doc.source_id
+                )
+                for context, chunk_id in mentions:
+                    await self.add_mention(
+                        entity_id=entity.entity_id,
+                        source_id=doc.source_id,
+                        is_news_article=False,
+                        context=context,
+                        chunk_id=chunk_id
+                    )
+                    mentions_added += 1
+            
+            await self.session.commit()
             return mentions_added
             
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Error scanning existing documents: {str(e)}")
+            logger.error(f"Error scanning documents: {str(e)}")
             raise
 
-    def _extract_context(self, content: str, entity_name: str, context_window: int = 100) -> List[str]:
-        """Extract all contexts around entity mentions"""
-        content_lower = content.lower()
-        entity_lower = entity_name.lower()
+    async def add_mention(self, entity_id: uuid.UUID, source_id: uuid.UUID, is_news_article: bool, context: str, chunk_id: str = None):
+        """Add a mention of an entity"""
+        try:
+            mention_id = uuid.uuid4()
+            current_time = str(datetime.now(timezone.utc))  # Simple str() cast
+            
+            # Set the appropriate source ID field
+            document_id = None
+            news_article_id = None
+            if is_news_article:
+                news_article_id = source_id
+            else:
+                document_id = source_id
+
+            query = text("""
+                INSERT INTO entity_mentions 
+                (mention_id, entity_id, document_id, news_article_id, user_id, chunk_id, context, timestamp)
+                VALUES (:mention_id, :entity_id, :document_id, :news_article_id, :user_id, :chunk_id, :context, :timestamp)
+            """)
+            
+            await self.session.execute(
+                query,
+                {
+                    "mention_id": mention_id,
+                    "entity_id": entity_id,
+                    "document_id": document_id,
+                    "news_article_id": news_article_id,
+                    "user_id": self.user_id,
+                    "chunk_id": chunk_id,
+                    "context": context,
+                    "timestamp": current_time
+                }
+            )
+            
+            return mention_id
+        except Exception as e:
+            logger.error(f"Error adding mention: {str(e)}")
+            raise
+
+    def _extract_context(self, text: str, term: str, case_sensitive: bool = True, context_chars: int = 200) -> List[str]:
+        """Extract context around each occurrence of a term in text"""
         contexts = []
+        if not case_sensitive:
+            search_text = text.lower()
+            search_term = term.lower()
+        else:
+            search_text = text
+            search_term = term
         
-        # Debug logging
-        logger.debug(f"Extracting contexts for '{entity_name}' in content of length {len(content)}")
-        
-        # First, count total occurrences for verification
-        total_occurrences = content_lower.count(entity_lower)
-        logger.debug(f"Total occurrences of '{entity_name}' in text: {total_occurrences}")
-        
-        # Find all occurrences of the entity
-        start_pos = 0
-        found_count = 0
-        
+        start = 0
         while True:
-            pos = content_lower.find(entity_lower, start_pos)
-            if pos == -1:  # No more occurrences
+            pos = search_text.find(search_term, start)
+            if pos == -1:
                 break
             
-            found_count += 1
-            # Calculate context window
-            context_start = max(0, pos - context_window)
-            context_end = min(len(content), pos + len(entity_name) + context_window)
+            # Get context window
+            context_start = max(0, pos - context_chars)
+            context_end = min(len(text), pos + len(term) + context_chars)
             
-            # Extract and clean context
-            context = content[context_start:context_end].strip()
+            # Get the actual text from the original (preserving case)
+            context = text[context_start:context_end].strip()
             
-            # Debug logging
-            logger.debug(f"Found mention {found_count}/{total_occurrences} at position {pos}")
-            logger.debug(f"Context: {context[:50]}...")
+            # Add ellipsis if context is truncated
+            if context_start > 0:
+                context = "..." + context
+            if context_end < len(text):
+                context = context + "..."
             
             contexts.append(context)
-            
-            # Move start position to just after the current match
-            start_pos = pos + 1  # Changed from pos + len(entity_name) to ensure we don't miss overlapping matches
-        
-        # Verify we found all occurrences
-        logger.debug(f"Found {found_count} mentions, extracted {len(contexts)} contexts")
-        if found_count != total_occurrences:
-            logger.warning(f"Mismatch between found mentions ({found_count}) and total occurrences ({total_occurrences})")
+            start = pos + len(search_term)
         
         return contexts
 
@@ -277,9 +292,21 @@ class EntityTrackingService:
         mentions = []
         
         try:
+            # Debug logging
+            logger.debug(f"Scanning document {document_id}")
+            logger.debug(f"Content length: {len(content) if content else 0}")
+            logger.debug(f"Active entities: {self.active_entities}")
+            
             # First scan the entire document for each entity
             for entity_name in self.active_entities:
-                if entity_name.lower() in content.lower():
+                entity_lower = entity_name.lower()
+                content_lower = content.lower() if content else ""
+                
+                # Debug logging
+                count = content_lower.count(entity_lower)
+                logger.debug(f"Found {count} occurrences of '{entity_name}' in document")
+                
+                if entity_lower in content_lower:
                     # Get entity details including user_id
                     entity_id = await self._get_entity_id(entity_name)
                     entity = await self.session.execute(
@@ -322,87 +349,68 @@ class EntityTrackingService:
         limit: int = 50,
         offset: int = 0
     ) -> List[Dict]:
-        """Get recent mentions of an entity"""
+        """Get recent mentions of an entity from both documents and news articles"""
         try:
-            # Create debug log
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            debug_file = f"entity_mentions_{timestamp}.log"
+            entity_id = await self._get_entity_id(entity_name)
             
-            with open(debug_file, "w", encoding="utf-8") as f:
-                f.write(f"Entity Mentions Debug Log for: {entity_name}\n")
-                f.write("=" * 80 + "\n\n")
-                
-                entity_id = await self._get_entity_id(entity_name)
-                f.write(f"Found entity_id: {entity_id}\n\n")
-                
-                # First, get total count for debugging
-                count_query = text("SELECT COUNT(*) FROM entity_mentions WHERE entity_id = :entity_id")
-                count_result = await self.session.execute(count_query, {"entity_id": entity_id})
-                total_mentions = count_result.scalar()
-                f.write(f"Total mentions in database: {total_mentions}\n\n")
-                
-                # Get document content for verification
-                doc_query = text("""
-                    SELECT DISTINCT d.document_id, d.raw_content, d.filename
-                    FROM documents d
-                    JOIN entity_mentions m ON d.document_id = m.document_id
-                    WHERE m.entity_id = :entity_id
-                """)
-                doc_result = await self.session.execute(doc_query, {"entity_id": entity_id})
-                documents = doc_result.fetchall()
-                
-                f.write(f"Found {len(documents)} documents with mentions:\n")
-                for doc in documents:
-                    f.write(f"\nDocument: {doc.filename}\n")
-                    f.write(f"Content Length: {len(doc.raw_content)} chars\n")
-                    f.write("-" * 80 + "\n")
-                    f.write(doc.raw_content)
-                    f.write("\n" + "-" * 80 + "\n")
-                    
-                    # Count actual occurrences in content
-                    content_lower = doc.raw_content.lower()
-                    entity_lower = entity_name.lower()
-                    total_occurrences = content_lower.count(entity_lower)
-                    f.write(f"\nActual occurrences in document: {total_occurrences}\n")
-                
-                # Get mentions
-                query = text("""
+            # Updated query to handle both document and news article mentions
+            query = text("""
+                WITH document_mentions AS (
                     SELECT 
-                        m.context, 
-                        m.timestamp, 
+                        m.context,
+                        m.timestamp,
                         d.filename,
-                        d.document_id,
-                        f.project_id
+                        m.document_id::text as document_id,
+                        NULL::text as news_article_id,
+                        p.project_id::text as project_id,
+                        'document' as source_type
                     FROM entity_mentions m
-                    JOIN documents d ON m.document_id = d.document_id
+                    JOIN documents d ON d.document_id = m.document_id
                     JOIN project_folders f ON d.folder_id = f.folder_id
+                    JOIN research_projects p ON f.project_id = p.project_id
                     WHERE m.entity_id = :entity_id
-                    ORDER BY m.timestamp DESC
-                    LIMIT :limit OFFSET :offset
-                """)
-                
-                result = await self.session.execute(
-                    query,
-                    {"entity_id": entity_id, "limit": limit, "offset": offset}
+                    AND m.document_id IS NOT NULL
+                ),
+                news_mentions AS (
+                    SELECT 
+                        m.context,
+                        m.timestamp,
+                        na.title as filename,
+                        NULL::text as document_id,
+                        m.news_article_id::text as news_article_id,
+                        NULL::text as project_id,
+                        'news' as source_type
+                    FROM entity_mentions m
+                    JOIN news_articles na ON na.id = m.news_article_id
+                    WHERE m.entity_id = :entity_id
+                    AND m.news_article_id IS NOT NULL
                 )
-                
-                results = [{
-                    "context": row.context,
-                    "timestamp": row.timestamp,
-                    "filename": row.filename,
-                    "document_id": str(row.document_id),
-                    "project_id": str(row.project_id)
-                } for row in result]
-                
-                f.write(f"\nReturning {len(results)} mentions\n")
-                for i, mention in enumerate(results, 1):
-                    f.write(f"\nMention #{i}:\n")
-                    f.write(f"File: {mention['filename']}\n")
-                    f.write(f"Context: {mention['context']}\n")
-                
-                logger.info(f"Debug log written to: {debug_file}")
-                return results
-                
+                SELECT * FROM (
+                    SELECT * FROM document_mentions
+                    UNION ALL
+                    SELECT * FROM news_mentions
+                ) combined
+                ORDER BY timestamp DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            
+            result = await self.session.execute(
+                query,
+                {"entity_id": entity_id, "limit": limit, "offset": offset}
+            )
+            
+            results = [{
+                "context": row.context,
+                "timestamp": row.timestamp,
+                "filename": row.filename,
+                "document_id": row.document_id,
+                "news_article_id": row.news_article_id,
+                "project_id": row.project_id,
+                "source_type": row.source_type
+            } for row in result]
+            
+            return results
+            
         except Exception as e:
             logger.error(f"Error getting entity mentions: {str(e)}")
             logger.exception("Full traceback:")
@@ -780,3 +788,43 @@ class EntityTrackingService:
                 reverse=True
             )[:5]
         }
+
+    async def _find_mentions_in_text(
+        self,
+        entity_name: str,
+        text: str,
+        source_id: uuid.UUID,
+        context_chars: int = 100
+    ) -> List[tuple[str, str]]:
+        """Find mentions of an entity in text and return context snippets with chunk IDs"""
+        if not text:
+            return []
+        
+        mentions = []
+        text_lower = text.lower()
+        entity_lower = entity_name.lower()
+        
+        pos = 0
+        while True:
+            pos = text_lower.find(entity_lower, pos)
+            if pos == -1:
+                break
+            
+            # Extract context
+            context_start = max(0, pos - context_chars)
+            context_end = min(len(text), pos + len(entity_name) + context_chars)
+            context = text[context_start:context_end].strip()
+            
+            # Add ellipsis if context is truncated
+            if context_start > 0:
+                context = "..." + context
+            if context_end < len(text):
+                context = context + "..."
+            
+            # Create chunk ID using source_id and position
+            chunk_id = f"{source_id}_{pos}"
+            
+            mentions.append((context, chunk_id))
+            pos += len(entity_name)
+        
+        return mentions

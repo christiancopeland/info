@@ -1883,4 +1883,22 @@ input[type="date"].news-filter::-webkit-calendar-picker-indicator:hover {
     to { transform: rotate(360deg); }
 }
 
+.delete-entity-btn {
+    background-color: transparent;
+    color: #dc3545;
+    border: none;
+    padding: 5px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.delete-entity-btn:hover {
+    color: #c82333;
+}
+
+.entity-actions {
+    display: flex;
+    gap: 5px;
+}
+
 

@@ -3,7 +3,8 @@ from typing import Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
+import logging
 
 from ....database import get_db
 from ....services.entity_tracker import EntityTrackingService
@@ -12,6 +13,7 @@ from ....models.entities import TrackedEntity
 
 router = APIRouter()
 document_processor = DocumentProcessor()
+logger = logging.getLogger(__name__)
 
 class EntityTrackRequest(BaseModel):
     name: str
@@ -32,24 +34,26 @@ async def get_current_user():
 
 @router.post("/entities/track")
 async def track_entity(
-    request: EntityTrackRequest,
+    entity: EntityTrackRequest,
     current_user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db)
 ):
     """Add a new entity to track"""
-    entity_tracker = EntityTrackingService(session, document_processor)
+    entity_tracker = EntityTrackingService(
+        session=session, 
+        document_processor=document_processor,
+        user_id=current_user.user_id
+    )
     try:
-        entity = await entity_tracker.add_tracked_entity(
-            name=request.name,
-            entity_type=request.entity_type,
-            metadata=request.metadata,
-            user_id=current_user.user_id  # Add the user_id parameter
+        tracked_entity = await entity_tracker.add_tracked_entity(
+            name=entity.name,
+            entity_type=entity.entity_type,
+            metadata=entity.metadata,
+            user_id=current_user.user_id
         )
-        return {
-            "entity_id": str(entity.entity_id),
-            "name": entity.name
-        }
+        return tracked_entity
     except Exception as e:
+        logger.error(f"Error tracking entity: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/entities/{entity_name}/mentions")
@@ -57,27 +61,25 @@ async def get_entity_mentions(
     entity_name: str,
     limit: int = 50,
     offset: int = 0,
+    current_user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db)
 ):
     """Get mentions for an entity"""
-    entity_tracker = EntityTrackingService(session, document_processor)
+    logger.debug(f"Getting mentions for entity: {entity_name}")
+    entity_tracker = EntityTrackingService(
+        session=session, 
+        document_processor=document_processor,
+        user_id=current_user.user_id
+    )
     try:
         mentions = await entity_tracker.get_entity_mentions(
             entity_name=entity_name,
             limit=limit,
             offset=offset
         )
-        
-        # Format the mentions to match frontend expectations
-        return [
-            {
-                "context": mention["context"],
-                "filename": mention["filename"],
-                "timestamp": str(mention["timestamp"])  # Ensure timestamp is a string
-            }
-            for mention in mentions
-        ]
+        return mentions
     except Exception as e:
+        logger.error(f"Error getting mentions for {entity_name}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/entities")
@@ -133,3 +135,165 @@ async def get_entity_relationships(
         return network
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/entities/{entity_name}/scan")
+async def scan_entity_mentions(
+    entity_name: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """Manually trigger a scan for entity mentions"""
+    logger.debug(f"Starting scan for entity: {entity_name}")
+    entity_tracker = EntityTrackingService(
+        session=session, 
+        document_processor=document_processor,
+        user_id=current_user.user_id
+    )
+    try:
+        # Get entity details
+        entity = await session.execute(
+            select(TrackedEntity)
+            .where(TrackedEntity.name_lower == entity_name.lower())
+        )
+        entity = entity.scalar_one()
+        logger.debug(f"Found entity: {entity.name} (ID: {entity.entity_id})")
+        
+        # Scan for mentions
+        mentions_added = await entity_tracker._scan_existing_documents(entity)
+        
+        return {
+            "status": "success",
+            "mentions_found": mentions_added,
+            "message": f"Successfully scanned for mentions of '{entity_name}'"
+        }
+    except Exception as e:
+        logger.error(f"Error scanning for {entity_name}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/entities/diagnostic")
+async def diagnostic_check(
+    session: AsyncSession = Depends(get_db)
+):
+    """Check database state for troubleshooting"""
+    try:
+        # Check news articles
+        news_query = text("SELECT COUNT(*) as count, COUNT(CASE WHEN content IS NOT NULL THEN 1 END) as with_content FROM news_articles")
+        news_result = await session.execute(news_query)
+        news_stats = news_result.first()
+        
+        # Check tracked entities
+        entity_query = text("SELECT COUNT(*) FROM tracked_entities")
+        entity_result = await session.execute(entity_query)
+        entity_count = entity_result.scalar()
+        
+        # Check mentions
+        mention_query = text("SELECT COUNT(*) FROM entity_mentions")
+        mention_result = await session.execute(mention_query)
+        mention_count = mention_result.scalar()
+        
+        return {
+            "news_articles": {
+                "total": news_stats.count,
+                "with_content": news_stats.with_content
+            },
+            "tracked_entities": entity_count,
+            "entity_mentions": mention_count
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Diagnostic check failed: {str(e)}"
+        )
+
+@router.get("/entities/diagnostic/articles")
+async def diagnostic_check_articles(
+    limit: int = 5,
+    session: AsyncSession = Depends(get_db)
+):
+    """Check sample of articles for troubleshooting"""
+    try:
+        # Get sample of articles with their content status
+        article_query = text("""
+            SELECT 
+                id,
+                title,
+                url,
+                scraped_at,
+                CASE 
+                    WHEN content IS NULL THEN 'missing'
+                    WHEN content = '' THEN 'empty'
+                    ELSE 'present'
+                END as content_status,
+                CASE 
+                    WHEN content IS NOT NULL THEN length(content)
+                    ELSE 0
+                END as content_length
+            FROM news_articles
+            ORDER BY scraped_at DESC
+            LIMIT :limit
+        """)
+        
+        result = await session.execute(article_query, {"limit": limit})
+        articles = result.fetchall()
+        
+        return {
+            "articles": [
+                {
+                    "id": str(article.id),
+                    "title": article.title,
+                    "url": article.url,
+                    "scraped_at": str(article.scraped_at),
+                    "content_status": article.content_status,
+                    "content_length": article.content_length
+                }
+                for article in articles
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Article diagnostic check failed: {str(e)}"
+        )
+
+@router.delete("/entities/{entity_name}")
+async def delete_entity(
+    entity_name: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """Delete a tracked entity"""
+    try:
+        # Find the entity
+        query = select(TrackedEntity).where(
+            TrackedEntity.name_lower == entity_name.lower(),
+            TrackedEntity.user_id == current_user.user_id
+        )
+        result = await session.execute(query)
+        entity = result.scalar_one_or_none()
+        
+        if not entity:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Entity '{entity_name}' not found"
+            )
+        
+        # Delete related mentions first (if your DB doesn't handle cascading deletes)
+        delete_mentions = text("""
+            DELETE FROM entity_mentions 
+            WHERE entity_id = :entity_id
+        """)
+        await session.execute(delete_mentions, {"entity_id": entity.entity_id})
+        
+        # Delete the entity
+        await session.delete(entity)
+        await session.commit()
+        
+        return {"status": "success", "message": f"Entity '{entity_name}' deleted"}
+        
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete entity: {str(e)}"
+        )
