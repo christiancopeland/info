@@ -65,7 +65,7 @@ class BatchScraper:
         if api_key:
             self.headers["Authorization"] = f"Bearer {api_key}"
 
-    def extract_articles_batch(self, urls: List[str], max_retries: int = 10, retry_delay: int = 2) -> List[Article]:
+    def extract_articles_batch(self, urls: List[str], max_retries: int = 20, retry_delay: int = 5) -> List[Article]:
         # Step 1: Initialize batch job
         batch_payload = {
             "urls": urls,
@@ -132,27 +132,41 @@ class BatchScraper:
             print(f"Batch job initialized with ID: {batch_data.id}")
             print(f"Results URL: {result_url}")
 
-            # Step 2: Poll for results
+            # Step 2: Poll for results with exponential backoff
+            backoff = retry_delay
             for attempt in range(max_retries):
-                time.sleep(retry_delay)  # Wait before checking results
+                time.sleep(backoff)  # Wait before checking results
                 
-                result_response = requests.get(result_url, headers=self.headers)
-                result_response.raise_for_status()
-                
-                result_data = BatchResultResponse.model_validate_json(result_response.text)
-                
-                if result_data.status == "completed":
-                    print(f"Batch job completed. Credits used: {result_data.creditsUsed}")
+                try:
+                    result_response = requests.get(result_url, headers=self.headers)
+                    result_response.raise_for_status()
                     
-                    # Collect all articles from all responses
-                    all_articles = []
-                    for data in result_data.data:
-                        all_articles.extend(data.extract.articles)
-                    return all_articles
+                    result_data = BatchResultResponse.model_validate_json(result_response.text)
+                    
+                    if result_data.status == "completed":
+                        print(f"Batch job completed. Credits used: {result_data.creditsUsed}")
+                        
+                        # Collect all articles from all responses
+                        all_articles = []
+                        for data in result_data.data:
+                            all_articles.extend(data.extract.articles)
+                        return all_articles
+                    
+                    # If we're making progress, reset the backoff
+                    if result_data.completed > 0:
+                        backoff = retry_delay
+                    else:
+                        # Exponential backoff up to 30 seconds
+                        backoff = min(backoff * 1.5, 30)
+                    
+                    print(f"Job status: {result_data.status} ({result_data.completed}/{result_data.total})")
                 
-                print(f"Job status: {result_data.status} ({result_data.completed}/{result_data.total})")
+                except requests.RequestException as e:
+                    print(f"Request error during attempt {attempt + 1}: {str(e)}")
+                    # Continue retrying on request errors
+                    continue
             
-            raise TimeoutError("Batch job did not complete within the maximum retries")
+            raise TimeoutError(f"Batch job did not complete within {max_retries} retries. Last status: {result_data.status} ({result_data.completed}/{result_data.total})")
 
         except Exception as e:
             print(f"Error in batch scraping: {type(e).__name__}: {str(e)}")
@@ -163,92 +177,119 @@ async def scrape_liveblog_content(url: str, filtered_phrases: List[str]) -> str:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
         try:
-            page = await browser.new_page()
-            await page.set_viewport_size({"width": 1920, "height": 1080})
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            page = await context.new_page()
             
-            # Navigate to the URL and wait for content
-            await page.goto(url)
-            
-            # Wait for the main content container
-            await page.wait_for_selector('.wysiwyg-content', timeout=30000)
-            
-            # Click "Read more" button if it exists
+            # Increase timeout and add loading state check
             try:
-                read_more_button = await page.wait_for_selector('button:has-text("Read more")', timeout=5000)
-                if read_more_button:
-                    await read_more_button.click()
-                    await page.wait_for_timeout(1000)
-            except:
-                pass
+                # Navigate with a longer timeout
+                await page.goto(url, timeout=60000, wait_until='domcontentloaded')
+                
+                # Wait for either the content or an error state
+                try:
+                    await page.wait_for_selector('.wysiwyg-content, .timeline-item', timeout=30000)
+                except:
+                    print(f"Warning: Could not find main content selectors for {url}")
+                
+                # Add a small delay to allow dynamic content to load
+                await page.wait_for_timeout(2000)
+                
+            except Exception as e:
+                print(f"Navigation error for {url}: {str(e)}")
+                return f"Error loading page: {str(e)}"
             
             text_content = []
             
             # Get the main headline/title
-            main_title = await page.query_selector('h1')
-            if main_title:
-                title_text = await main_title.text_content()
-                text_content.append(f"# {title_text.strip()}\n")
+            try:
+                main_title = await page.query_selector('h1')
+                if main_title:
+                    title_text = await main_title.text_content()
+                    text_content.append(f"# {title_text.strip()}\n")
+            except Exception as e:
+                print(f"Error extracting title: {str(e)}")
             
             # Get the summary content
-            summary = await page.query_selector('.wysiwyg-content')
-            if summary:
-                summary_text = await summary.text_content()
-                if summary_text.strip():
-                    text_content.append("SUMMARY:")
-                    text_content.append(summary_text.strip())
+            try:
+                summary = await page.query_selector('.wysiwyg-content')
+                if summary:
+                    summary_text = await summary.text_content()
+                    if summary_text.strip():
+                        text_content.append("SUMMARY:")
+                        text_content.append(summary_text.strip())
+            except Exception as e:
+                print(f"Error extracting summary: {str(e)}")
             
-            # Get all liveblog entries
-            entries = await page.query_selector_all('.timeline-item')
-            
-            for entry in entries:
-                # Extract timestamp
-                timestamp = await entry.query_selector('.timeline-item__time')
-                if timestamp:
-                    time_text = await timestamp.text_content()
-                    text_content.append(f"\n[{time_text.strip()}]\n")
+            # Get all liveblog entries with error handling
+            try:
+                entries = await page.query_selector_all('.timeline-item')
                 
-                # Extract content
-                content = await entry.query_selector('.timeline-item__content')
-                if content:
-                    # Get headers
-                    headers = await content.query_selector_all('h2, h3, h4')
-                    for header in headers:
-                        header_text = await header.text_content()
-                        if (header_text.strip() and 
-                            not any(phrase in header_text.lower() for phrase in filtered_phrases)):
-                            text_content.append(f"\n## {header_text.strip()}\n")
-                    
-                    # Get paragraphs
-                    paragraphs = await content.query_selector_all('p')
-                    for p in paragraphs:
-                        p_text = await p.text_content()
-                        if (p_text.strip() and 
-                            not any(phrase in p_text.lower() for phrase in filtered_phrases)):
-                            text_content.append(p_text.strip())
-                    
-                    # Get list items
-                    list_items = await content.query_selector_all('li')
-                    for item in list_items:
-                        item_text = await item.text_content()
-                        if (item_text.strip() and 
-                            not any(phrase in item_text.lower() for phrase in filtered_phrases)):
-                            text_content.append(f"• {item_text.strip()}")
+                for entry in entries:
+                    try:
+                        # Extract timestamp
+                        timestamp = await entry.query_selector('.timeline-item__time')
+                        if timestamp:
+                            time_text = await timestamp.text_content()
+                            text_content.append(f"\n[{time_text.strip()}]\n")
+                        
+                        # Extract content
+                        content = await entry.query_selector('.timeline-item__content')
+                        if content:
+                            # Get headers
+                            headers = await content.query_selector_all('h2, h3, h4')
+                            for header in headers:
+                                header_text = await header.text_content()
+                                if (header_text.strip() and 
+                                    not any(phrase in header_text.lower() for phrase in filtered_phrases)):
+                                    text_content.append(f"\n## {header_text.strip()}\n")
+                            
+                            # Get paragraphs
+                            paragraphs = await content.query_selector_all('p')
+                            for p in paragraphs:
+                                p_text = await p.text_content()
+                                if (p_text.strip() and 
+                                    not any(phrase in p_text.lower() for phrase in filtered_phrases)):
+                                    text_content.append(p_text.strip())
+                            
+                            # Get list items
+                            list_items = await content.query_selector_all('li')
+                            for item in list_items:
+                                item_text = await item.text_content()
+                                if (item_text.strip() and 
+                                    not any(phrase in item_text.lower() for phrase in filtered_phrases)):
+                                    text_content.append(f"• {item_text.strip()}")
+                    except Exception as e:
+                        print(f"Error processing entry: {str(e)}")
+                        continue
+                
+            except Exception as e:
+                print(f"Error processing timeline entries: {str(e)}")
             
             # If no timeline items found, try to get content from wysiwyg sections
             if not entries:
-                wysiwyg_content = await page.query_selector_all('.wysiwyg-content h2, .wysiwyg-content h3, .wysiwyg-content p, .wysiwyg-content li')
-                for content in wysiwyg_content:
-                    tag_name = await content.evaluate('element => element.tagName.toLowerCase()')
-                    content_text = await content.text_content()
-                    
-                    if (content_text.strip() and 
-                        not any(phrase in content_text.lower() for phrase in filtered_phrases)):
-                        if tag_name in ['h2', 'h3']:
-                            text_content.append(f"\n## {content_text.strip()}\n")
-                        elif tag_name == 'li':
-                            text_content.append(f"• {content_text.strip()}")
-                        else:
-                            text_content.append(content_text.strip())
+                try:
+                    wysiwyg_content = await page.query_selector_all('.wysiwyg-content h2, .wysiwyg-content h3, .wysiwyg-content p, .wysiwyg-content li')
+                    for content in wysiwyg_content:
+                        try:
+                            tag_name = await content.evaluate('element => element.tagName.toLowerCase()')
+                            content_text = await content.text_content()
+                            
+                            if (content_text.strip() and 
+                                not any(phrase in content_text.lower() for phrase in filtered_phrases)):
+                                if tag_name in ['h2', 'h3']:
+                                    text_content.append(f"\n## {content_text.strip()}\n")
+                                elif tag_name == 'li':
+                                    text_content.append(f"• {content_text.strip()}")
+                                else:
+                                    text_content.append(content_text.strip())
+                        except Exception as e:
+                            print(f"Error processing wysiwyg content item: {str(e)}")
+                            continue
+                except Exception as e:
+                    print(f"Error processing wysiwyg content: {str(e)}")
             
             # Remove duplicate paragraphs that are next to each other
             filtered_content = []
@@ -258,7 +299,15 @@ async def scrape_liveblog_content(url: str, filtered_phrases: List[str]) -> str:
                     filtered_content.append(content)
                 prev_content = content
             
-            return '\n\n'.join(filtered_content)
+            final_content = '\n\n'.join(filtered_content)
+            if not final_content.strip():
+                return "No content could be extracted from the page."
+                
+            return final_content
+            
+        except Exception as e:
+            print(f"Unexpected error in scrape_liveblog_content: {str(e)}")
+            return f"Error scraping content: {str(e)}"
             
         finally:
             await browser.close()

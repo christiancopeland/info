@@ -472,13 +472,14 @@ class EntityTrackingService:
         self._write_debug(f"Starting relationship analysis for: {entity_name}")
         
         try:
-            # First check if we have mentions for this entity
+            # First check for mentions
             mention_check = await self.session.execute(
                 text("""
                     SELECT COUNT(*) as mention_count
                     FROM entity_mentions em
                     JOIN tracked_entities te ON em.entity_id = te.entity_id
                     WHERE te.name_lower = :entity_name
+                    AND (em.document_id IS NOT NULL OR em.news_article_id IS NOT NULL)
                 """),
                 {"entity_name": entity_name.lower()}
             )
@@ -489,34 +490,69 @@ class EntityTrackingService:
                 self._write_debug(f"No mentions found for entity: {entity_name}")
                 return {"nodes": [], "edges": [], "central_entities": []}
 
-            # Get related entities
-            related_entities = await self._find_related_entities(entity_name)
-            self._write_debug(f"Found {len(related_entities)} related entities: {related_entities}")
+            # Modified query to properly handle both document and news article mentions
+            related_query = text("""
+                WITH entity_mentions AS (
+                    SELECT 
+                        em.entity_id,
+                        em.document_id,
+                        em.news_article_id,
+                        em.chunk_id
+                    FROM entity_mentions em
+                    JOIN tracked_entities te ON em.entity_id = te.entity_id
+                    WHERE te.name_lower = :entity_name
+                )
+                SELECT 
+                    DISTINCT te.name,
+                    te.entity_id,
+                    COUNT(DISTINCT COALESCE(em2.document_id, em2.news_article_id)) as shared_docs
+                FROM entity_mentions base
+                JOIN entity_mentions em2 ON 
+                    (
+                        (base.document_id IS NOT NULL AND base.document_id = em2.document_id) OR
+                        (base.news_article_id IS NOT NULL AND base.news_article_id = em2.news_article_id)
+                    )
+                    AND base.chunk_id = em2.chunk_id
+                JOIN tracked_entities te ON em2.entity_id = te.entity_id
+                WHERE te.name_lower != :entity_name
+                GROUP BY te.name, te.entity_id
+                ORDER BY shared_docs DESC
+            """)
             
+            self._write_debug("Executing related entities query")
+            result = await self.session.execute(
+                related_query,
+                {"entity_name": entity_name.lower()}
+            )
+            
+            entities = [{"name": row.name, "shared_docs": row.shared_docs} for row in result]
+            self._write_debug(f"Found {len(entities)} related entities")
+            self._write_debug(f"Related entities with stats: {entities}")
+
             # Build relationship graph
             self._write_debug("Building relationship graph")
-            for related_entity in related_entities:
-                self._write_debug(f"Analyzing relationship with: {related_entity}")
+            for related_entity in entities:
+                self._write_debug(f"Analyzing relationship with: {related_entity['name']}")
                 
                 contexts = await self._get_cooccurrence_contexts(
                     entity1=entity_name,
-                    entity2=related_entity
+                    entity2=related_entity['name']
                 )
                 
                 if contexts:
                     strength = await self._calculate_relationship_strength(
                         entity1=entity_name,
-                        entity2=related_entity,
+                        entity2=related_entity['name'],
                         contexts=contexts
                     )
                     
                     self.entity_graph.add_edge(
                         entity_name,
-                        related_entity,
+                        related_entity['name'],
                         weight=strength,
                         contexts=contexts[:5]
                     )
-                    self._write_debug(f"Added edge to graph: {entity_name} - {related_entity} (strength: {strength:.3f})")
+                    self._write_debug(f"Added edge to graph: {entity_name} - {related_entity['name']} (strength: {strength:.3f})")
             
             network = await self._get_entity_network(entity_name)
             self._write_debug(f"Network analysis complete. Nodes: {len(network['nodes'])}, Edges: {len(network['edges'])}")
