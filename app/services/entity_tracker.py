@@ -27,6 +27,27 @@ class EntityTrackingService:
         self.entity_graph = nx.Graph()
         self.debug = debug
         self.debug_file = None
+
+    def _init_debug_file(self, entity_name: str) -> None:
+        """Initialize debug file if debug mode is enabled"""
+        if self.debug:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            debug_dir = "debug_logs"
+            os.makedirs(debug_dir, exist_ok=True)
+            self.debug_file = f"{debug_dir}/relationship_analysis_{entity_name}_{timestamp}.log"
+            
+            with open(self.debug_file, "w", encoding="utf-8") as f:
+                f.write(f"Relationship Analysis Debug Log\n")
+                f.write(f"Entity: {entity_name}\n")
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                f.write("=" * 80 + "\n\n")
+
+    def _write_debug(self, message: str) -> None:
+        """Write debug message to both logger and file if enabled"""
+        logger.debug(message)
+        if self.debug and self.debug_file:
+            with open(self.debug_file, "a", encoding="utf-8") as f:
+                f.write(f"{message}\n")
     
     async def add_tracked_entity(
         self,
@@ -445,27 +466,6 @@ class EntityTrackingService:
         
         return entity.entity_id
 
-    def _init_debug_file(self, entity_name: str) -> None:
-        """Initialize debug file if debug mode is enabled"""
-        if self.debug:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            debug_dir = "debug_logs"
-            os.makedirs(debug_dir, exist_ok=True)
-            self.debug_file = f"{debug_dir}/relationship_analysis_{entity_name}_{timestamp}.log"
-            
-            with open(self.debug_file, "w", encoding="utf-8") as f:
-                f.write(f"Relationship Analysis Debug Log\n")
-                f.write(f"Entity: {entity_name}\n")
-                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-                f.write("=" * 80 + "\n\n")
-
-    def _write_debug(self, message: str) -> None:
-        """Write debug message to both logger and file if enabled"""
-        logger.debug(message)
-        if self.debug and self.debug_file:
-            with open(self.debug_file, "a", encoding="utf-8") as f:
-                f.write(f"{message}\n")
-
     async def analyze_entity_relationships(self, entity_name: str) -> Dict:
         """Analyze relationships for a specific entity"""
         self._init_debug_file(entity_name)
@@ -479,7 +479,6 @@ class EntityTrackingService:
                     FROM entity_mentions em
                     JOIN tracked_entities te ON em.entity_id = te.entity_id
                     WHERE te.name_lower = :entity_name
-                    AND (em.document_id IS NOT NULL OR em.news_article_id IS NOT NULL)
                 """),
                 {"entity_name": entity_name.lower()}
             )
@@ -490,33 +489,54 @@ class EntityTrackingService:
                 self._write_debug(f"No mentions found for entity: {entity_name}")
                 return {"nodes": [], "edges": [], "central_entities": []}
 
-            # Modified query to properly handle both document and news article mentions
+            # Updated query to ensure truly unique contexts
             related_query = text("""
-                WITH entity_mentions AS (
-                    SELECT 
-                        em.entity_id,
-                        em.document_id,
-                        em.news_article_id,
-                        em.chunk_id
+                WITH base_mentions AS (
+                    SELECT em.*, te.name_lower
                     FROM entity_mentions em
                     JOIN tracked_entities te ON em.entity_id = te.entity_id
                     WHERE te.name_lower = :entity_name
+                ),
+                shared_contexts AS (
+                    -- First get unique contexts where entities appear together
+                    SELECT DISTINCT
+                        te2.name,
+                        te2.entity_id,
+                        bm.context
+                    FROM base_mentions bm
+                    JOIN entity_mentions em2 ON 
+                        (bm.document_id = em2.document_id OR bm.news_article_id = em2.news_article_id)
+                        AND (
+                            bm.chunk_id = em2.chunk_id  -- Exact chunk match
+                            OR (  -- Adjacent chunk match
+                                SPLIT_PART(bm.chunk_id, '_', 1) = SPLIT_PART(em2.chunk_id, '_', 1)
+                                AND ABS(
+                                    CAST(NULLIF(SPLIT_PART(bm.chunk_id, '_', 2), '') AS INTEGER) - 
+                                    CAST(NULLIF(SPLIT_PART(em2.chunk_id, '_', 2), '') AS INTEGER)
+                                ) <= 1
+                            )
+                        )
+                    JOIN tracked_entities te2 ON em2.entity_id = te2.entity_id
+                    WHERE te2.name_lower != :entity_name
+                    AND bm.context IS NOT NULL
+                ),
+                related_mentions AS (
+                    SELECT 
+                        name,
+                        entity_id,
+                        COUNT(DISTINCT context) as shared_docs,
+                        COUNT(*) as total_mentions,
+                        SUM(CASE 
+                            WHEN context IS NOT NULL THEN 3  -- Weight for each unique context
+                            ELSE 1
+                        END) as relationship_strength,
+                        array_agg(DISTINCT context) as contexts
+                    FROM shared_contexts
+                    GROUP BY name, entity_id
+                    HAVING COUNT(DISTINCT context) > 0
                 )
-                SELECT 
-                    DISTINCT te.name,
-                    te.entity_id,
-                    COUNT(DISTINCT COALESCE(em2.document_id, em2.news_article_id)) as shared_docs
-                FROM entity_mentions base
-                JOIN entity_mentions em2 ON 
-                    (
-                        (base.document_id IS NOT NULL AND base.document_id = em2.document_id) OR
-                        (base.news_article_id IS NOT NULL AND base.news_article_id = em2.news_article_id)
-                    )
-                    AND base.chunk_id = em2.chunk_id
-                JOIN tracked_entities te ON em2.entity_id = te.entity_id
-                WHERE te.name_lower != :entity_name
-                GROUP BY te.name, te.entity_id
-                ORDER BY shared_docs DESC
+                SELECT * FROM related_mentions
+                ORDER BY relationship_strength DESC, shared_docs DESC
             """)
             
             self._write_debug("Executing related entities query")
@@ -525,53 +545,57 @@ class EntityTrackingService:
                 {"entity_name": entity_name.lower()}
             )
             
-            entities = [{"name": row.name, "shared_docs": row.shared_docs} for row in result]
+            entities = [{
+                "name": row.name,
+                "shared_docs": row.shared_docs,
+                "total_mentions": row.total_mentions,
+                "relationship_strength": float(row.relationship_strength),
+                "contexts": row.contexts if row.contexts else []
+            } for row in result]
+            
             self._write_debug(f"Found {len(entities)} related entities")
-            self._write_debug(f"Related entities with stats: {entities}")
 
-            # Build relationship graph
-            self._write_debug("Building relationship graph")
-            for related_entity in entities:
-                self._write_debug(f"Analyzing relationship with: {related_entity['name']}")
+            # Build network response
+            nodes = [{"id": entity_name, "group": 1}]  # Central node
+            edges = []
+            central_entities = []  # Format: [entity_name, normalized_strength]
+
+            # Find max relationship strength for normalization
+            max_strength = max((e["relationship_strength"] for e in entities), default=1)
+
+            for entity in entities:
+                nodes.append({
+                    "id": entity["name"],
+                    "group": 2
+                })
                 
-                contexts = await self._get_cooccurrence_contexts(
-                    entity1=entity_name,
-                    entity2=related_entity['name']
-                )
+                normalized_strength = entity["relationship_strength"] / max_strength
                 
-                if contexts:
-                    strength = await self._calculate_relationship_strength(
-                        entity1=entity_name,
-                        entity2=related_entity['name'],
-                        contexts=contexts
-                    )
-                    
-                    self.entity_graph.add_edge(
-                        entity_name,
-                        related_entity['name'],
-                        weight=strength,
-                        contexts=contexts[:5]
-                    )
-                    self._write_debug(f"Added edge to graph: {entity_name} - {related_entity['name']} (strength: {strength:.3f})")
-            
-            network = await self._get_entity_network(entity_name)
-            self._write_debug(f"Network analysis complete. Nodes: {len(network['nodes'])}, Edges: {len(network['edges'])}")
-            
-            if self.debug:
-                self._write_debug("\nFinal Network Data:")
-                self._write_debug(f"Nodes: {network['nodes']}")
-                self._write_debug(f"Edges: {network['edges']}")
-                self._write_debug(f"Central entities: {network['central_entities']}")
+                edges.append({
+                    "source": entity_name,
+                    "target": entity["name"],
+                    "value": normalized_strength,
+                    "weight": normalized_strength,  # Frontend expects 'weight'
+                    "contexts": [{"context": ctx} for ctx in entity["contexts"][:5]]  # Limit to top 5 contexts
+                })
                 
-                logger.info(f"Debug log written to: {self.debug_file}")
-            
-            return network
+                # Add to central_entities as [name, score] pairs
+                central_entities.append([
+                    entity["name"],
+                    normalized_strength
+                ])
+
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "central_entities": central_entities
+            }
             
         except Exception as e:
             self._write_debug(f"Error in relationship analysis: {str(e)}")
             raise
-            
-    async def _find_related_entities(self, entity_name: str) -> List[str]:
+
+    async def _find_related_entities_in_docs(self, entity_name: str) -> List[str]:
         """Find entities that appear in the same documents"""
         self._write_debug(f"Finding related entities for: {entity_name}")
         try:
@@ -638,16 +662,133 @@ class EntityTrackingService:
             self._write_debug(f"Error finding related entities: {str(e)}")
             raise
 
+    async def _find_related_entities_in_news(self, entity_name: str) -> List[str]:
+        """Find entities that appear in the same news articles"""
+        self._write_debug(f"Finding related entities in news articles for: {entity_name}")
+        try:
+            # Debug current entity mentions
+            debug_query = text("""
+                SELECT em.*, na.content, na.title
+                FROM entity_mentions em
+                JOIN tracked_entities te ON em.entity_id = te.entity_id
+                JOIN news_articles na ON em.news_article_id = na.id
+                WHERE te.name_lower = :entity_name
+            """)
+            debug_result = await self.session.execute(
+                debug_query,
+                {"entity_name": entity_name.lower()}
+            )
+            self._write_debug(f"Debug: Found mentions for {entity_name}:")
+            for row in debug_result:
+                self._write_debug(f"Article: {row.title}")
+                self._write_debug(f"Context: {row.context}")
+
+            # Enhanced query to find related entities
+            query = text("""
+                WITH target_mentions AS (
+                    -- Get all news articles and chunks where target entity appears
+                    SELECT 
+                        em.news_article_id,
+                        em.chunk_id,
+                        na.content,
+                        COUNT(*) as mention_count
+                    FROM entity_mentions em
+                    JOIN tracked_entities te ON em.entity_id = te.entity_id
+                    JOIN news_articles na ON em.news_article_id = na.id
+                    WHERE te.name_lower = :entity_name
+                    GROUP BY em.news_article_id, em.chunk_id, na.content
+                )
+                SELECT 
+                    te2.name,
+                    te2.entity_id,
+                    COUNT(DISTINCT em2.news_article_id) as shared_articles,
+                    COUNT(*) as total_mentions,
+                    SUM(CASE 
+                        WHEN em2.chunk_id = tm.chunk_id THEN 3  -- Same chunk: strongest relationship
+                        WHEN ABS(
+                            CAST(SPLIT_PART(em2.chunk_id, '_', 2) AS INTEGER) - 
+                            CAST(SPLIT_PART(tm.chunk_id, '_', 2) AS INTEGER)
+                        ) <= 1 THEN 2  -- Adjacent chunks: strong relationship
+                        ELSE 1  -- Same article: basic relationship
+                    END) as relationship_strength
+                FROM target_mentions tm
+                JOIN entity_mentions em2 ON em2.news_article_id = tm.news_article_id
+                JOIN tracked_entities te2 ON em2.entity_id = te2.entity_id
+                WHERE 
+                    te2.name_lower != :entity_name
+                    AND em2.news_article_id IS NOT NULL
+                GROUP BY te2.name, te2.entity_id
+                HAVING COUNT(DISTINCT em2.news_article_id) > 0
+                ORDER BY relationship_strength DESC, shared_articles DESC
+            """)
+            
+            self._write_debug("Executing enhanced related entities query")
+            result = await self.session.execute(
+                query,
+                {"entity_name": entity_name.lower()}
+            )
+            
+            entities = [{
+                "name": row.name,
+                "shared_articles": row.shared_articles,
+                "total_mentions": row.total_mentions,
+                "relationship_strength": float(row.relationship_strength)
+            } for row in result]
+            
+            self._write_debug(f"Found {len(entities)} related entities")
+            for entity in entities:
+                self._write_debug(f"Related entity: {entity['name']}")
+                self._write_debug(f"  Shared articles: {entity['shared_articles']}")
+                self._write_debug(f"  Total mentions: {entity['total_mentions']}")
+                self._write_debug(f"  Relationship strength: {entity['relationship_strength']}")
+            
+            return [e["name"] for e in entities]
+            
+        except Exception as e:
+            self._write_debug(f"Error finding related entities in news: {str(e)}")
+            raise
+
     async def _get_cooccurrence_contexts(
         self,
         entity1: str,
         entity2: str
     ) -> List[Dict]:
-        """Get contexts where two entities co-occur"""
+        """Get contexts where two entities co-occur in both documents and news articles"""
         try:
+            # First, let's debug the mentions for each entity
+            debug_query = text("""
+                SELECT 
+                    entity_id,
+                    document_id,
+                    news_article_id,
+                    chunk_id,
+                    context
+                FROM entity_mentions
+                WHERE entity_id IN (
+                    SELECT entity_id FROM tracked_entities 
+                    WHERE name_lower IN (:entity1_name, :entity2_name)
+                )
+            """)
+            
+            debug_result = await self.session.execute(
+                debug_query,
+                {
+                    "entity1_name": entity1.lower(),
+                    "entity2_name": entity2.lower()
+                }
+            )
+            
+            self._write_debug(f"\nDebug mentions for {entity1} and {entity2}:")
+            for row in debug_result:
+                self._write_debug(f"Entity: {row.entity_id}, Doc: {row.document_id}, News: {row.news_article_id}, Chunk: {row.chunk_id}")
+
             query = text("""
                 WITH entity1_mentions AS (
-                    SELECT document_id, context, chunk_id
+                    SELECT 
+                        document_id,
+                        news_article_id,
+                        context,
+                        chunk_id
                     FROM entity_mentions
                     WHERE entity_id = (
                         SELECT entity_id FROM tracked_entities 
@@ -655,7 +796,11 @@ class EntityTrackingService:
                     )
                 ),
                 entity2_mentions AS (
-                    SELECT document_id, context, chunk_id
+                    SELECT 
+                        document_id,
+                        news_article_id,
+                        context,
+                        chunk_id
                     FROM entity_mentions
                     WHERE entity_id = (
                         SELECT entity_id FROM tracked_entities 
@@ -663,19 +808,40 @@ class EntityTrackingService:
                     )
                 )
                 SELECT 
-                    e1.document_id as doc_id,
+                    COALESCE(e1.document_id, e1.news_article_id) as source_id,
                     e1.context as context1,
                     e2.context as context2,
-                    d.filename as filename
+                    COALESCE(d.filename, n.title) as filename,
+                    CASE 
+                        WHEN e1.document_id IS NOT NULL THEN 'document'
+                        ELSE 'news'
+                    END as source_type,
+                    e1.chunk_id as chunk1,
+                    e2.chunk_id as chunk2
                 FROM entity1_mentions e1
                 JOIN entity2_mentions e2 
-                    ON e1.document_id = e2.document_id 
-                    AND e1.chunk_id = e2.chunk_id
-                JOIN documents d ON e1.document_id = d.document_id
+                    ON (
+                        (e1.document_id IS NOT NULL AND e1.document_id = e2.document_id) OR
+                        (e1.news_article_id IS NOT NULL AND e1.news_article_id = e2.news_article_id)
+                    )
+                    -- Relaxed chunk matching condition
+                    AND (
+                        e1.chunk_id = e2.chunk_id 
+                        OR (
+                            -- For documents that might have multiple chunks
+                            SPLIT_PART(e1.chunk_id, '_', 1) = SPLIT_PART(e2.chunk_id, '_', 1)
+                            AND ABS(
+                                CAST(SPLIT_PART(e1.chunk_id, '_', 2) AS INTEGER) - 
+                                CAST(SPLIT_PART(e2.chunk_id, '_', 2) AS INTEGER)
+                            ) <= 1
+                        )
+                    )
+                LEFT JOIN documents d ON e1.document_id = d.document_id
+                LEFT JOIN news_articles n ON e1.news_article_id = n.id
                 LIMIT 10
             """)
             
-            self._write_debug("Executing co-occurrence query")
+            self._write_debug("\nExecuting co-occurrence query")
             result = await self.session.execute(
                 query,
                 {
@@ -692,10 +858,13 @@ class EntityTrackingService:
                 context2 = ' '.join(row.context2.split())[:200]  # Clean whitespace and truncate
                 
                 contexts.append({
-                    "document_id": str(row.doc_id),
+                    "document_id": str(row.source_id),
                     "context": f"...{context1}... and ...{context2}...",  # Combined context
-                    "filename": row.filename
+                    "filename": row.filename,
+                    "source_type": row.source_type,
+                    "chunks": f"{row.chunk1} - {row.chunk2}"  # Add chunk info for debugging
                 })
+                self._write_debug(f"\nFound co-occurrence in chunks: {row.chunk1} - {row.chunk2}")
             
             self._write_debug(f"Found {len(contexts)} co-occurrence contexts")
             if contexts:

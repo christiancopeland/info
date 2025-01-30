@@ -148,6 +148,7 @@ class NewsFeed {
             
             const item = document.createElement('div');
             item.className = 'news-item';
+            item.dataset.articleId = article.id;  // Add article ID to the item
             
             item.innerHTML = `
                 <div class="news-metadata">
@@ -159,8 +160,69 @@ class NewsFeed {
                 <a href="${article.url}" target="_blank" class="news-link">Read more</a>
             `;
             
+            // Add click handler to the entire news item
+            item.addEventListener('click', (event) => {
+                // Don't trigger if clicking the "Read more" link
+                if (event.target.classList.contains('news-link')) {
+                    return;
+                }
+
+                // Remove selected class from all items
+                document.querySelectorAll('.news-item').forEach(item => {
+                    item.classList.remove('selected');
+                });
+
+                // Add selected class to clicked item
+                item.classList.add('selected');
+
+                // Call the select endpoint and send WebSocket command
+                fetch(`/api/v1/news/articles/${article.id}/select`, {
+                    method: 'POST',
+                    credentials: 'include'
+                }).then(response => {
+                    if (response.ok) {
+                        if (window.wsManager) {
+                            window.wsManager.sendCommand('article_context', {
+                                action: 'select',
+                                articleId: article.id,
+                                title: article.title,
+                                url: article.url
+                            });
+                        }
+                    }
+                }).catch(error => {
+                    console.error('Error selecting article:', error);
+                });
+            });
+            
+            // Add click handler for the "Read more" link
+            const readMoreLink = item.querySelector('.news-link');
+            readMoreLink.addEventListener('click', (event) => {
+                event.stopPropagation();  // Prevent triggering the item click
+                this.handleArticleClick(event, readMoreLink);
+            });
+            
             this.newsFeed.appendChild(item);
         });
+    }
+
+    handleArticleClick(event, linkElement) {
+        // Send WebSocket command before opening the article
+        if (window.wsManager) {
+            const articleData = {
+                id: linkElement.closest('.news-item').dataset.articleId,
+                title: linkElement.closest('.news-item').querySelector('.news-title').textContent,
+                heading: linkElement.closest('.news-item').querySelector('.news-heading').textContent,
+                url: linkElement.href
+            };
+
+            window.wsManager.sendCommand('article_context', {
+                action: 'view',
+                articleId: articleData.id,
+                title: articleData.title,
+                url: articleData.url
+            });
+        }
     }
 
     setupTabListener() {

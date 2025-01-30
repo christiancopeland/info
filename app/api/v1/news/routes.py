@@ -208,3 +208,40 @@ async def rescrape_articles(
             status_code=500,
             detail=f"Failed to rescrape articles: {str(e)}"
         )
+
+@router.post("/articles/{article_id}/select")
+async def select_article(
+    article_id: str,
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Record when a user selects/views an article"""
+    try:
+        # Verify article exists
+        query = select(NewsArticle).where(NewsArticle.id == article_id)
+        result = await db.execute(query)
+        article = result.scalar_one_or_none()
+        
+        if not article:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Article with ID {article_id} not found"
+            )
+        
+        return {
+            "status": "success",
+            "article": {
+                "id": str(article.id),
+                "title": article.title,
+                "url": article.url,
+                "source_site": article.source_site,
+                "scraped_at": article.scraped_at.isoformat()
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to select article: {str(e)}"
+        )

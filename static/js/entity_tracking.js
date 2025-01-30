@@ -310,15 +310,60 @@ class EntityTracker {
 
     async viewRelationships(entityName) {
         try {
-            const response = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}/relationships`);
+            console.log(`Fetching relationships for: ${entityName}`);
+            const params = new URLSearchParams({
+                depth: '2',
+                include_news: 'true',
+                include_docs: 'true',
+                min_shared: '1'
+            });
+            
+            const response = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}/relationships?${params}`);
             if (!response.ok) {
-                throw new Error('Failed to fetch relationships');
+                throw new Error(`Failed to fetch relationships: ${response.status}`);
             }
 
             const network = await response.json();
+            console.log('Network data received:', network);
+            
+            if (!network.nodes || network.nodes.length === 0) {
+                console.log('No relationships found, triggering scan...');
+                // Try triggering a scan if no relationships found
+                const scanResponse = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}/scan`, {
+                    method: 'POST'
+                });
+                
+                if (scanResponse.ok) {
+                    // Fetch relationships again after scan
+                    const newResponse = await fetch(`/api/v1/entities/${encodeURIComponent(entityName)}/relationships?${params}`);
+                    if (newResponse.ok) {
+                        const newNetwork = await newResponse.json();
+                        console.log('Network data after scan:', newNetwork);
+                        this.displayRelationships(entityName, newNetwork);
+                        return;
+                    }
+                }
+            }
+            
             this.displayRelationships(entityName, network);
         } catch (error) {
             console.error('Error fetching relationships:', error);
+            this.showErrorMessage('Error Loading Relationships', error.message);
+        }
+    }
+
+    showErrorMessage(title, message) {
+        const entityList = document.getElementById('entityList');
+        if (entityList) {
+            entityList.innerHTML = `
+                <div class="error-message">
+                    <h3>${title}</h3>
+                    <p>${message}</p>
+                    <button class="back-btn" onclick="entityTracker.closeMentionsView()">
+                        <i class="fas fa-arrow-left"></i> Back
+                    </button>
+                </div>
+            `;
         }
     }
 
