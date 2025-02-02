@@ -148,7 +148,7 @@ class NewsFeed {
             
             const item = document.createElement('div');
             item.className = 'news-item';
-            item.dataset.articleId = article.id;  // Add article ID to the item
+            item.dataset.articleId = article.id;
             
             item.innerHTML = `
                 <div class="news-metadata">
@@ -157,7 +157,18 @@ class NewsFeed {
                 </div>
                 <h4 class="news-title">${article.title}</h4>
                 <p class="news-heading">${article.heading}</p>
-                <a href="${article.url}" target="_blank" class="news-link">Read more</a>
+                <div class="news-actions">
+                    <a href="${article.url}" target="_blank" class="news-link">Read more</a>
+                    <button class="analyze-button" data-article-id="${article.id}">
+                        <i class="fas fa-brain"></i> Analyze
+                    </button>
+                </div>
+                <div class="analysis-container" id="analysis-${article.id}" style="display: none;">
+                    <div class="analysis-content"></div>
+                    <div class="analysis-loading" style="display: none;">
+                        <i class="fas fa-spinner fa-spin"></i> Generating analysis...
+                    </div>
+                </div>
             `;
             
             // Add click handler to the entire news item
@@ -201,6 +212,13 @@ class NewsFeed {
                 event.stopPropagation();  // Prevent triggering the item click
                 this.handleArticleClick(event, readMoreLink);
             });
+
+            // Add analyze button click handler
+            const analyzeButton = item.querySelector('.analyze-button');
+            analyzeButton.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await this.handleAnalyzeClick(article);
+            });
             
             this.newsFeed.appendChild(item);
         });
@@ -222,6 +240,89 @@ class NewsFeed {
                 title: articleData.title,
                 url: articleData.url
             });
+        }
+    }
+
+    async handleAnalyzeClick(article) {
+        console.log('Starting analysis for article:', article.id); // Debug log
+        const analysisContainer = document.querySelector(`#analysis-${article.id}`);
+        const analysisContent = analysisContainer.querySelector('.analysis-content');
+        const loadingIndicator = analysisContainer.querySelector('.analysis-loading');
+
+        // Show loading state
+        analysisContainer.style.display = 'block';
+        analysisContent.style.display = 'none';
+        loadingIndicator.style.display = 'block';
+
+        try {
+            // First get the article content
+            console.log('Fetching article content...'); // Debug log
+            const contentResponse = await fetch(`/api/v1/news/articles/${article.id}/content`);
+            if (!contentResponse.ok) {
+                throw new Error('Failed to fetch article content');
+            }
+            const articleData = await contentResponse.json();
+            
+            // Generate new analysis
+            const messages = [
+                { 
+                    role: "user", 
+                    content: `Please analyze this news article:
+Title: ${article.title}
+URL: ${article.url}
+Content: ${articleData.content}
+
+Please provide a detailed analysis focusing on:
+1. Key facts and claims
+2. Sources cited
+3. Context and background
+4. Potential biases or missing information
+5. Related topics for further research`
+                }
+            ];
+
+            console.log('Sending analysis request with messages:', messages); // Debug log
+
+            const analysisResponse = await fetch('/api/v1/research_assistant/generate-analysis-from-news-article', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages })
+            });
+
+            if (!analysisResponse.ok) {
+                console.error('Analysis generation failed:', await analysisResponse.text()); // Debug log
+                throw new Error('Failed to generate analysis');
+            }
+
+            const analysis = await analysisResponse.json();
+            console.log('Analysis generated:', analysis); // Debug log
+            const analysisText = analysis.analysis;
+
+            // Store the analysis (overwriting any existing one)
+            console.log('Storing new analysis...'); // Debug log
+            await fetch(`/api/v1/news/articles/${article.id}/analysis`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: analysisText })
+            });
+
+            // Show analysis in both places
+            console.log('Displaying analysis'); // Debug log
+            analysisContent.innerHTML = marked.parse(analysisText);
+            loadingIndicator.style.display = 'none';
+            analysisContent.style.display = 'block';
+
+            // Send to chat
+            if (window.wsManager) {
+                console.log('Sending analysis to chat'); // Debug log
+                window.wsManager.appendMessage('assistant', `## Analysis of "${article.title}"\n\n${analysisText}`);
+            }
+
+        } catch (error) {
+            console.error('Error handling analysis:', error); // Debug log
+            analysisContent.innerHTML = '<div class="error">Failed to generate analysis. Please try again.</div>';
+            loadingIndicator.style.display = 'none';
+            analysisContent.style.display = 'block';
         }
     }
 

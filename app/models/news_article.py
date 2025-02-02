@@ -15,6 +15,7 @@ class NewsArticle(Base):
     url = Column(String, nullable=False)
     source_site = Column(String, nullable=False)
     content = Column(String)
+    analysis = Column(String)
     scraped_at = Column(DateTime(timezone=True), nullable=False)
     is_liveblog = Column(Boolean, default=False)
     last_updated = Column(DateTime(timezone=True))

@@ -15,6 +15,7 @@ from ....services.document_processor import DocumentProcessor
 from ....core.config import settings
 from ....models.user import User
 from ....database import async_session
+from ..research_assistant.routes import research_assistant, Message  # Import the existing research assistant
 
 
 router = APIRouter()
@@ -125,6 +126,32 @@ async def websocket_endpoint(websocket: WebSocket):
                 #                 "command": command,
                 #                 "error": str(e)
                 #             })
+            
+            # Handle chat messages using research assistant
+            elif message_data.get('type') == 'chat':
+                try:
+                    messages_data = message_data.get('messages', [])
+                    if not messages_data:
+                        await websocket.send_json({
+                            "type": "error",
+                            "error": "No messages found in request"
+                        })
+                        continue
+                    
+                    # Convert to Message objects and process through research assistant
+                    messages = [Message(**msg) for msg in messages_data]
+                    async for chunk in research_assistant.chat(messages):
+                        if isinstance(chunk, dict):
+                            await websocket.send_json(chunk)
+                        else:
+                            logger.debug(f"Unexpected chunk format: {chunk}")
+                            
+                except Exception as e:
+                    logger.error(f"Error processing chat: {str(e)}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": f"Error processing chat: {str(e)}"
+                    })
             
             # Handle regular chat messages
             elif message_data.get('type') == 'chat':

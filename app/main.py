@@ -14,6 +14,7 @@ from .api.v1.auth.routes import router as auth_router
 from .api.v1.websocket.routes import router as websocket_router
 from .api.v1.news.routes import router as news_routes
 from .api.v1.entities.routes import router as entities_router
+from .api.v1.research_assistant.routes import router as research_assistant_router
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.API_TITLE,
@@ -35,6 +36,8 @@ app.include_router(websocket_router, prefix="/api/v1/websocket", tags=["websocke
 app.include_router(project_router, prefix="/api/v1", tags=["projects"])
 app.include_router(news_routes, prefix="/api/v1/news", tags=["news"])
 app.include_router(entities_router, prefix="/api/v1", tags=["entities"])
+app.include_router(research_assistant_router, prefix="/api/v1/research_assistant", tags=["research_assistant"])
+
 # Initialize services
 document_processor, redis_client, security_service, project_service = init_services()
 

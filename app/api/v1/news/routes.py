@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
-from typing import List
+from typing import List, Dict, Any
 from datetime import datetime, timezone, timedelta
 import asyncio
 import logging
@@ -9,6 +9,7 @@ import logging
 from ....database import get_db
 from ....models.news_article import NewsArticle
 from ....services.news_extraction_service import NewsExtractionService
+from app.services.research_assistant import ResearchAssistant, Message
 
 router = APIRouter()
 
@@ -16,6 +17,8 @@ router = APIRouter()
 NEWS_SERVICE = NewsExtractionService(
     api_url="http://localhost:3002/v1"
 )
+
+research_assistant = ResearchAssistant()
 
 logger = logging.getLogger(__name__)
 
@@ -244,4 +247,64 @@ async def select_article(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to select article: {str(e)}"
+        )
+
+@router.get("/articles/{article_id}/analysis")
+async def get_article_analysis(
+    article_id: str,
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Get existing analysis for an article"""
+    try:
+        # Query for the article
+        query = select(NewsArticle).where(NewsArticle.id == article_id)
+        result = await db.execute(query)
+        article = result.scalar_one_or_none()
+        
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        
+        if not article.analysis:
+            raise HTTPException(status_code=404, detail="Analysis not found")
+        
+        return {"content": article.analysis}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching analysis: {str(e)}")  # Debug log
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
+
+@router.post("/articles/{article_id}/analysis")
+async def store_article_analysis(
+    article_id: str,
+    analysis: Dict[str, Any],
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Store analysis for an article"""
+    try:
+        # Update the article
+        stmt = (
+            update(NewsArticle)
+            .where(NewsArticle.id == article_id)
+            .values(analysis=analysis["content"])
+        )
+        result = await db.execute(stmt)
+        await db.commit()
+        
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Article not found")
+        
+        return {"status": "success"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error storing analysis: {str(e)}")  # Debug log
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
         )

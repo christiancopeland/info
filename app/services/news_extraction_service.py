@@ -60,7 +60,15 @@ class NewsExtractionService:
             "https://www.local3news.com",
             "https://www.propublica.org",
             "https://apnews.com",
-            "https://www.aljazeera.com"
+            "https://www.aljazeera.com",
+            "https://www.realclearinvestigations.com/",
+            "https://www.icij.org/",
+            "https://www.thebureauinvestigates.com/",
+            "https://thegrayzone.com/",
+            "https://forbiddenstories.org/",
+            "https://www.bellingcat.com/",
+            
+
         ]
         
         # Add common headers to mimic a browser

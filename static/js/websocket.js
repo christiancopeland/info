@@ -5,6 +5,7 @@ class WebSocketManager {
         this.reconnectAttempts = 0;
         this.reconnectDelay = 3000; // Start with 3 seconds
         this.ws = null;
+        this.currentMessageDiv = null;
         
         console.log('Initializing WebSocket manager');
         this.connect();
@@ -49,6 +50,12 @@ class WebSocketManager {
                     if (data.type === 'error') {
                         console.error('WebSocket error:', data.error);
                         this.appendMessage('error', data.error);
+                    } else if (data.type === 'chunk') {
+                        // Handle streaming chunks
+                        this.handleStreamingChunk(data.message);
+                    } else if (data.type === 'done') {
+                        // Handle completion of streaming
+                        this.handleStreamingDone();
                     } else if (data.type === 'command_response') {
                         console.log('Command response received:', data);
                         if (data.command === 'authenticate' && data.status === 'success') {
@@ -101,7 +108,10 @@ class WebSocketManager {
         try {
             const data = {
                 type: 'chat',
-                message: message
+                messages: [{
+                    role: 'user',
+                    content: message
+                }]
             };
             console.log('Sending chat message:', data);
             this.ws.send(JSON.stringify(data));
@@ -145,6 +155,35 @@ class WebSocketManager {
         messageDiv.textContent = content;
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    handleStreamingChunk(message) {
+        let messageDiv = this.getCurrentOrCreateMessageDiv();
+        messageDiv.textContent += message.content;
+        
+        const chatMessages = document.getElementById('chat-messages');
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+
+    handleStreamingDone() {
+        this.currentMessageDiv = null; // Reset for next message
+    }
+
+    getCurrentOrCreateMessageDiv() {
+        if (!this.currentMessageDiv) {
+            const chatMessages = document.getElementById('chat-messages');
+            if (!chatMessages) {
+                console.error('Chat messages container not found');
+                return;
+            }
+
+            this.currentMessageDiv = document.createElement('div');
+            this.currentMessageDiv.className = 'message assistant';
+            chatMessages.appendChild(this.currentMessageDiv);
+        }
+        return this.currentMessageDiv;
     }
 }
 
