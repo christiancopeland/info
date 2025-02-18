@@ -1990,3 +1990,91 @@ input[type="date"].news-filter::-webkit-calendar-picker-indicator:hover {
 }
 
 
+.message.assistant {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    width: 100%;
+    padding: 1em;
+    margin: 0.5em 0;
+}
+
+.message.assistant h3 {
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+.message.assistant ul {
+    margin: 0.5em 0;
+    padding-left: 2em;
+}
+
+.message.assistant li {
+    margin: 0.3em 0;
+}
+
+.message.assistant p {
+    margin: 0.5em 0;
+}
+
+.message.assistant.in-progress {
+    border-left: 3px solid #007bff;
+}
+
+#chat-messages {
+    display: flex;
+    flex-direction: column;
+    scroll-behavior: smooth;
+    overflow-y: auto;
+    padding: 1em;
+    width: 100%;
+}
+
+.message {
+    display: block;
+    width: 100%;
+    margin-bottom: 1em;
+}
+
+.message.assistant {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    width: 100%;
+    padding: 1em;
+    margin: 0.5em 0;
+}
+
+.message.assistant h3 {
+    display: block;
+    width: 100%;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+.message.assistant ul {
+    display: block;
+    width: 100%;
+    margin: 0.5em 0;
+    padding-left: 2em;
+}
+
+.message.assistant li {
+    display: block;
+    width: 100%;
+    margin: 0.3em 0;
+}
+
+.message.assistant p {
+    display: block;
+    width: 100%;
+    margin: 0.5em 0;
+}
+
+.message.assistant.in-progress {
+    border-left: 3px solid #007bff;
+}
+

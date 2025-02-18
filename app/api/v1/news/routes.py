@@ -9,7 +9,7 @@ import logging
 from ....database import get_db
 from ....models.news_article import NewsArticle
 from ....services.news_extraction_service import NewsExtractionService
-from app.services.research_assistant import ResearchAssistant, Message
+from app.services.research_assistant import ResearchAssistant
 
 router = APIRouter()
 
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 async def get_news_articles(
     db: AsyncSession = Depends(get_db),
     limit: int = 100,
-    days: int = 7
+    days: int = 30
 ) -> List[dict]:
     """
     Get recent news articles, ordered by scraped_at date.

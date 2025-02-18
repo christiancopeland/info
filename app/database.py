@@ -6,6 +6,8 @@ import os
 import logging
 from fastapi import HTTPException
 
+
+
 logger = logging.getLogger(__name__)
 
 # Create declarative base

@@ -14,7 +14,7 @@ from ....database import get_db
 from ....models.project import ResearchProject
 from ....services.project_service import ProjectService
 from ....services.document_processor import DocumentProcessor
-from ....services.auth.security_service import SecurityService
+from ....services.security_service import SecurityService
 from ....core.config import settings
 
 

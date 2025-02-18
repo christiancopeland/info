@@ -18,6 +18,7 @@ class ResearchProject(Base):
     settings = Column(JSONB, default={})
     
     folders = relationship("ProjectFolder", back_populates="project", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="project", lazy="dynamic")
 
 class ProjectFolder(Base):
     __tablename__ = 'project_folders'

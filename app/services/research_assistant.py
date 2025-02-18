@@ -2,11 +2,6 @@ from typing import List, Dict, Any, Optional
 import httpx
 import json
 import asyncio
-from pydantic import BaseModel
-
-class Message(BaseModel):
-    role: str
-    content: str
 
 class ResearchAssistant:
     """Basic Research Assistant implementation with chat and structured output support"""
@@ -14,16 +9,16 @@ class ResearchAssistant:
     def __init__(self, api_url: str = "http://localhost:11434"):
         self.api_url = api_url
         self.chat_endpoint = f"{api_url}/api/chat"
-        self.model = "llama3.2-vision"  # Default model
+        self.model = "qwen2.5-coder:14b"  # Default model
         print(f"ResearchAssistant initialized with endpoint: {self.chat_endpoint}")
         
-    async def chat(self, messages: List[Message], stream: bool = True) -> Any:
+    async def chat(self, messages: List[Dict[str, str]], stream: bool = True) -> Any:
         """Basic chat functionality with streaming support"""
         print(f"Starting chat with messages: {messages}")  # Debug log
         
         payload = {
             "model": self.model,
-            "messages": [msg.model_dump() for msg in messages],
+            "messages": messages,
             "stream": stream
         }
         print(f"Sending payload: {payload}")  # Debug log
@@ -108,80 +103,136 @@ class ResearchAssistant:
                     raise Exception(error_msg) from e
 
     async def structured_chat(self, 
-                            messages: List[Message], 
+                            messages: List[Dict[str, str]], 
                             output_schema: Dict[str, Any]) -> Any:
-        """
-        Chat with structured output based on provided JSON schema
-        """
+        """Chat with structured output based on provided JSON schema"""
         payload = {
             "model": self.model,
-            "messages": [msg.model_dump() for msg in messages],
-            "stream": False,  # Structured output requires non-streaming
+            "messages": messages,
+            "stream": False,
             "format": output_schema,
             "options": {
-                "temperature": 0  # Lower temperature for more consistent structured output
+                "temperature": 0,  # Lower temperature for more consistent structured output
+                "num_ctx": 8192
             }
         }
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(self.chat_endpoint, json=payload)
-            result = response.json()
-            
-            # Extract the JSON content from the assistant's message
-            if result.get("message", {}).get("content"):
-                try:
-                    return json.loads(result["message"]["content"])
-                except json.JSONDecodeError:
-                    return result["message"]["content"]
-            return result
+        print(f"Sending payload to LLM: {payload}")
         
-    async def generate_analysis_from_news_article(self, messages: List[Message]) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:  # Increase client timeout
+            try:
+                response = await client.post(self.chat_endpoint, json=payload)
+                print(f"Raw response status: {response.status_code}")
+                
+                if response.status_code == 499:  # Client closed connection
+                    raise ValueError("LLM server timeout - VRAM issue detected")
+                elif response.status_code != 200:
+                    raise ValueError(f"LLM server error: {response.status_code}")
+                
+                result = response.json()
+                print(f"Raw response JSON: {result}")
+                
+                if result.get("message", {}).get("content"):
+                    content = result["message"]["content"]
+                    print(f"Extracted content: {content}")
+                    
+                    try:
+                        parsed_content = json.loads(content)
+                        print(f"Parsed JSON content: {parsed_content}")
+                        return parsed_content
+                    except json.JSONDecodeError as e:
+                        print(f"JSON decode error: {e}. Returning raw content")
+                        return {"analysis": content}
+                
+                print(f"No message content found in response. Returning full result")
+                return result
+                
+            except httpx.TimeoutException:
+                raise ValueError("Request timed out. The LLM server might be experiencing high load or VRAM issues.")
+            except Exception as e:
+                raise ValueError(f"Error communicating with LLM server: {str(e)}")
+
+    async def generate_analysis_from_news_article(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
         """Generate analysis for a news article"""
-
-        output_schema = {
-            "type": "object",
-            "properties": {
-                "analysis": {
-                    "type": "string",
-                    "description": "A detailed analysis with Key Points and Analysis sections"
-                }
-            },
-            "required": ["analysis"]
-        }
-
-        # Add system message to guide the model
-        system_message = Message(
-            role="system",
-            content="""Generate a comprehensive analysis with investigative journalism in 
-            mind. Include the following sections:
-            1. Key Points: Bullet points of main findings
-            2. Analysis: Detailed examination of implications
-            Format with markdown and ensure all claims are supported by document content."""
-        )
-        
-        messages = [system_message] + messages
         try:
-            print("Generating analysis with messages:", messages)  # Debug log
-            
-            # Make sure we're using the right model and settings for analysis
-            response = await self.structured_chat(messages, output_schema)
-            
-            print("Raw response from model:", response)  # Debug log
-            
-            # Make sure we get a proper response
-            if not response or not isinstance(response, dict) or 'content' not in response:
-                print("Invalid response format:", response)  # Debug log
-                raise ValueError("Invalid response from language model")
+            # Add system message at the beginning of the messages list
+            system_message = {
+                "role": "system",
+                "content": """You are an expert journalist and analyst. Generate a comprehensive 
+                analysis of the provided news article. Your analysis should be detailed and 
+                thorough, covering:
+                1. Key Points: Main findings and claims from the article
+                2. Sources & Citations: Analysis of the sources used and their credibility
+                3. Context: Relevant background information and historical context
+                4. Critical Analysis: Examination of potential biases and missing information
+                5. Further Research: Related topics and angles for additional investigation
 
-            return {
-                "analysis": response['content']
+                
+                IMPORTANT: Your response must be detailed and at least 500 words long. Format your response in markdown with clear section headers. Ensure all 
+                analysis is based on the article content provided."""
             }
+            
+            # Ensure messages is a list of dictionaries
+            if isinstance(messages, str):
+                try:
+                    messages = json.loads(messages)
+                except json.JSONDecodeError:
+                    messages = [{"role": "user", "content": messages}]
+            elif not isinstance(messages, list):
+                messages = [{"role": "user", "content": str(messages)}]
+            
+            all_messages = [system_message] + messages
+            
+            max_retries = 3
+            retry_delay = 5  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    response = await self.structured_chat(
+                        messages=all_messages,
+                        output_schema={
+                            "type": "object",
+                            "properties": {
+                                "analysis": {
+                                    "type": "string",
+                                    "description": "A detailed markdown-formatted analysis of the article (minimum 500 words). Structure your response with the following sections: ## Key Points, ## Sources & Citations, ## Context, ## Critical Analysis, ## Further Research."
+                                }
+                            },
+                            "required": ["analysis"]
+                        }
+                    )
+                    
+                    print(f"Response from structured_chat (attempt {attempt + 1}): {response}")
+                    
+                    if isinstance(response, dict) and "analysis" in response:
+                        analysis_content = response["analysis"]
+                        print(f"Analysis content length: {len(analysis_content)}")
+                        print(f"Analysis content preview: {analysis_content[:200]}")
+                        
+                        if len(analysis_content) < 100:
+                            raise ValueError(f"Analysis response too short. Response: {analysis_content}")
+                        return response
+                    
+                    raise ValueError(f"Unexpected response format: {response}")
+                    
+                except ValueError as e:
+                    if "VRAM issue" in str(e) and attempt < max_retries - 1:
+                        print(f"VRAM issue detected, retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    raise
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        print(f"Error on attempt {attempt + 1}: {str(e)}, retrying...")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    raise
 
         except Exception as e:
-            print(f"Error generating analysis: {str(e)}")  # Debug log
+            print(f"Error generating analysis: {str(e)}")
             raise
         
-    async def generate_knowledge_graph_from_news_article(self, messages: List[Message]) -> Any:
+    async def generate_knowledge_graph_from_news_article(self, messages: List[Dict[str, str]]) -> Any:
         """
         Generate a knowledge graph from a given news article
         """
@@ -197,19 +248,19 @@ class ResearchAssistant:
         }
         
         # Add system message to guide the model
-        system_message = Message(
-            role="system",
-            content="""Create a knowledge graph with the following sections:
+        system_message = {
+            "role": "system",
+            "content": """Create a knowledge graph with the following sections:
             1. Entities: List and describe key entities
             2. Relationships: Describe connections between entities
             3. Context: Provide relevant background information
             Format the output as a markdown document with clear section headers."""
-        )
+        }
         
         messages = [system_message] + messages
         return await self.structured_chat(messages, output_schema)
 
-    async def generate_analysis_from_document(self, messages: List[Message]) -> Any:
+    async def generate_analysis_from_document(self, messages: List[Dict[str, str]]) -> Any:
         """
         Generate an analysis of a given document
         """
@@ -225,18 +276,18 @@ class ResearchAssistant:
         }
         
         # Add system message to guide the model
-        system_message = Message(
-            role="system",
-            content="""Generate a comprehensive analysis with investigative journalism in mind. Include the following sections:
+        system_message = {
+            "role": "system",
+            "content": """Generate a comprehensive analysis with investigative journalism in mind. Include the following sections:
             1. Key Points: Bullet points of main findings
             2. Analysis: Detailed examination of implications
             Format with markdown and ensure all claims are supported by document content."""
-        )
+        }
         
         messages = [system_message] + messages
         return await self.structured_chat(messages, output_schema)
 
-    async def generate_knowledge_graph_from_document(self, messages: List[Message]) -> Any:
+    async def generate_knowledge_graph_from_document(self, messages: List[Dict[str, str]]) -> Any:
         """
         Generate a knowledge graph from a given document
         """
@@ -276,14 +327,14 @@ class ResearchAssistant:
         }
         
         # Add system message to guide the model
-        system_message = Message(
-            role="system",
-            content="""Create a structured knowledge graph with:
+        system_message = {
+            "role": "system",
+            "content": """Create a structured knowledge graph with:
             1. Entities: Key actors, organizations, policies, and concepts
             2. Relationships: Specific connections between entities
             3. Context: Background information and implications
             Ensure all elements are directly supported by the document."""
-        )
+        }
         
         messages = [system_message] + messages
         return await self.structured_chat(messages, output_schema)
@@ -297,7 +348,7 @@ async def example_usage():
     
     # Basic chat example
     messages = [
-        Message(role="user", content="What is the capital of France?")
+        {"role": "user", "content": "What is the capital of France?"}
     ]
     
     # Streaming chat

@@ -16,7 +16,7 @@ import logging
 
 from ..database import get_db, init_db, engine
 from ..services.document_processor import DocumentProcessor
-from ..services.auth.security_service import SecurityService
+from ..services.security_service import SecurityService
 from ..services.project_service import ProjectService
 from ..models.user import User
 from .config import settings

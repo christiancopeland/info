@@ -144,31 +144,45 @@ class WebSocketManager {
     }
 
     appendMessage(role, content) {
-        const chatMessages = document.getElementById('chat-messages');
-        if (!chatMessages) {
-            console.error('Chat messages container not found');
-            return;
-        }
+        if (role === 'user') {
+            const chatMessages = document.getElementById('chat-messages');
+            if (!chatMessages) {
+                console.error('Chat messages container not found');
+                return;
+            }
 
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${role}`;
-        messageDiv.textContent = content;
-        chatMessages.appendChild(messageDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            messageDiv.textContent = content;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        // Ignore assistant messages as they'll be handled by streaming
     }
 
     handleStreamingChunk(message) {
         let messageDiv = this.getCurrentOrCreateMessageDiv();
-        messageDiv.textContent += message.content;
         
-        const chatMessages = document.getElementById('chat-messages');
-        if (chatMessages) {
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+        // Accumulate the content
+        const currentContent = messageDiv.getAttribute('data-content') || '';
+        const newContent = currentContent + (message.content || '');
+        messageDiv.setAttribute('data-content', newContent);
+        
+        try {
+            // Render the accumulated content as markdown
+            messageDiv.innerHTML = marked.parse(newContent);
+            
+            // Scroll to the bottom smoothly
+            const chatMessages = document.getElementById('chat-messages');
+            if (chatMessages) {
+                chatMessages.scrollTo({
+                    top: chatMessages.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }
+        } catch (e) {
+            console.error('Error rendering markdown:', e);
         }
-    }
-
-    handleStreamingDone() {
-        this.currentMessageDiv = null; // Reset for next message
     }
 
     getCurrentOrCreateMessageDiv() {
@@ -180,10 +194,18 @@ class WebSocketManager {
             }
 
             this.currentMessageDiv = document.createElement('div');
-            this.currentMessageDiv.className = 'message assistant';
+            this.currentMessageDiv.className = 'message assistant in-progress';
+            this.currentMessageDiv.setAttribute('data-content', '');
             chatMessages.appendChild(this.currentMessageDiv);
         }
         return this.currentMessageDiv;
+    }
+
+    handleStreamingDone() {
+        if (this.currentMessageDiv) {
+            this.currentMessageDiv.classList.remove('in-progress');
+            this.currentMessageDiv = null; // Reset for next message
+        }
     }
 }
 

@@ -9,13 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 # Internal imports
-from ....services.auth.security_service import SecurityService
-from ....services.entity_tracker import EntityTrackingService
-from ....services.document_processor import DocumentProcessor
-from ....core.config import settings
-from ....models.user import User
-from ....database import async_session
-from ..research_assistant.routes import research_assistant, Message  # Import the existing research assistant
+from app.services.security_service import SecurityService
+from app.services.entity_tracker import EntityTrackingService
+from app.services.document_processor import DocumentProcessor
+from app.core.config import settings
+from app.models.user import User
+from app.database import async_session
+from app.services.research_assistant import ResearchAssistant  # Import the existing research assistant
 
 
 router = APIRouter()
@@ -30,6 +30,8 @@ redis_client = redis.Redis(
 )
 
 document_processor = DocumentProcessor()
+
+research_assistant = ResearchAssistant()
 
 class ConnectionManager:
     def __init__(self):
@@ -138,9 +140,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         })
                         continue
                     
-                    # Convert to Message objects and process through research assistant
-                    messages = [Message(**msg) for msg in messages_data]
-                    async for chunk in research_assistant.chat(messages):
+                    # Process messages directly (no Message class conversion needed)
+                    async for chunk in research_assistant.chat(messages_data):
                         if isinstance(chunk, dict):
                             await websocket.send_json(chunk)
                         else:

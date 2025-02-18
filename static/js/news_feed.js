@@ -244,7 +244,7 @@ class NewsFeed {
     }
 
     async handleAnalyzeClick(article) {
-        console.log('Starting analysis for article:', article.id); // Debug log
+        console.log('Starting analysis for article:', article);
         const analysisContainer = document.querySelector(`#analysis-${article.id}`);
         const analysisContent = analysisContainer.querySelector('.analysis-content');
         const loadingIndicator = analysisContainer.querySelector('.analysis-loading');
@@ -256,71 +256,77 @@ class NewsFeed {
 
         try {
             // First get the article content
-            console.log('Fetching article content...'); // Debug log
+            console.log('Fetching article content...');
             const contentResponse = await fetch(`/api/v1/news/articles/${article.id}/content`);
             if (!contentResponse.ok) {
                 throw new Error('Failed to fetch article content');
             }
             const articleData = await contentResponse.json();
             
-            // Generate new analysis
-            const messages = [
-                { 
-                    role: "user", 
-                    content: `Please analyze this news article:
-Title: ${article.title}
-URL: ${article.url}
-Content: ${articleData.content}
+            if (!articleData.content) {
+                throw new Error('No content available for article');
+            }
 
-Please provide a detailed analysis focusing on:
-1. Key facts and claims
-2. Sources cited
-3. Context and background
-4. Potential biases or missing information
-5. Related topics for further research`
+            // Format the message with clear delimiters
+            const messages = [
+                {
+                    role: "user",
+                    content: [
+                        "Please analyze this news article:",
+                        `Title: ${article.title}`,
+                        `URL: ${article.url}`,
+                        `Content: ${articleData.content}`,
+                        "",
+                        "Please provide a detailed analysis focusing on:",
+                        "1. Key facts and claims",
+                        "2. Sources cited",
+                        "3. Context and background",
+                        "4. Potential biases or missing information",
+                        "5. Related topics for further research"
+                    ].join('\n')
                 }
             ];
 
-            console.log('Sending analysis request with messages:', messages); // Debug log
+            console.log('Sending analysis request with messages:', messages);
 
             const analysisResponse = await fetch('/api/v1/research_assistant/generate-analysis-from-news-article', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
                 body: JSON.stringify({ messages })
             });
 
             if (!analysisResponse.ok) {
-                console.error('Analysis generation failed:', await analysisResponse.text()); // Debug log
-                throw new Error('Failed to generate analysis');
+                const errorText = await analysisResponse.text();
+                console.error('Analysis generation failed:', errorText);
+                throw new Error(`Failed to generate analysis: ${errorText}`);
             }
 
             const analysis = await analysisResponse.json();
-            console.log('Analysis generated:', analysis); // Debug log
-            const analysisText = analysis.analysis;
+            console.log('Analysis received:', analysis);
 
-            // Store the analysis (overwriting any existing one)
-            console.log('Storing new analysis...'); // Debug log
+            if (!analysis.analysis || typeof analysis.analysis !== 'string') {
+                throw new Error('Invalid analysis format received');
+            }
+
+            // Store the analysis
+            console.log('Storing analysis...');
             await fetch(`/api/v1/news/articles/${article.id}/analysis`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: analysisText })
+                body: JSON.stringify({ content: analysis.analysis })
             });
 
-            // Show analysis in both places
-            console.log('Displaying analysis'); // Debug log
-            analysisContent.innerHTML = marked.parse(analysisText);
+            // Display analysis
+            analysisContent.innerHTML = marked.parse(analysis.analysis);
             loadingIndicator.style.display = 'none';
             analysisContent.style.display = 'block';
 
-            // Send to chat
-            if (window.wsManager) {
-                console.log('Sending analysis to chat'); // Debug log
-                window.wsManager.appendMessage('assistant', `## Analysis of "${article.title}"\n\n${analysisText}`);
-            }
-
         } catch (error) {
-            console.error('Error handling analysis:', error); // Debug log
-            analysisContent.innerHTML = '<div class="error">Failed to generate analysis. Please try again.</div>';
+            console.error('Error handling analysis:', error);
+            analysisContent.innerHTML = `<div class="error">Failed to generate analysis: ${error.message}</div>`;
             loadingIndicator.style.display = 'none';
             analysisContent.style.display = 'block';
         }

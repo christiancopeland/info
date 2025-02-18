@@ -12,7 +12,7 @@ import uuid
 
 from ....database import get_db
 from ....models.user import User
-from ....services.auth.security_service import SecurityService
+from ....services.security_service import SecurityService
 from ....core.config import settings
 from ....core.dependencies import test_api_connection, create_access_token, pwd_context, get_current_user
 

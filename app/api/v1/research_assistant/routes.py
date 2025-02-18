@@ -1,29 +1,55 @@
-from fastapi import APIRouter, WebSocket, HTTPException, Depends
+from contextlib import asynccontextmanager
+from fastapi import APIRouter, WebSocket, HTTPException, Depends, Body, Cookie
 from fastapi.responses import StreamingResponse
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from uuid import UUID
+import logging
 
-from app.services.research_assistant import ResearchAssistant, Message
+
 from app.database import get_db
 from app.models.news_article import NewsArticle
+from app.models.conversation import Conversation, Message
+from app.services.research_assistant import ResearchAssistant
+from app.services.conversation_service import ConversationService
+from app.services.security_service import SecurityService
+from app.core.config import settings    
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+# Global service instances
+conversation_service = None
 research_assistant = ResearchAssistant()
+security_service = SecurityService(settings.SECRET_KEY, settings.ALGORITHM)
+
+@asynccontextmanager
+async def lifespan(app):
+    # Initialize services on startup
+    global conversation_service
+    conversation_service = ConversationService(get_db(), research_assistant)
+    
+    yield
+    
+    # Cleanup on shutdown
+    # Add any cleanup code here if needed
+
+router = APIRouter(lifespan=lifespan)
 
 print("Initializing research_assistant router")  # Debug log
 
 class ChatRequest(BaseModel):
-    messages: List[Message]
+    messages: List[Dict[str, str]]
     stream: bool = True
 
 class StructuredChatRequest(BaseModel):
-    messages: List[Message]
+    messages: List[Dict[str, str]]
     output_schema: Dict[str, Any]
 
 class NewsAnalysisRequest(BaseModel):
-    messages: List[Message]
+    messages: List[Dict[str, str]]
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
@@ -50,14 +76,37 @@ async def generate_analysis_from_news_article(
 ):
     """Generate analysis for a news article"""
     try:
-        # Extract article ID from the first message
-        # Assuming the message contains the article ID in a consistent format
-        first_message = request.messages[0].content
-        article_info = first_message.split('\n')
-        article_url = next((line.split('URL: ')[1] for line in article_info if line.startswith('URL: ')), None)
+        print(f"Received request body: {request}")  # Debug log to see raw request
+        
+        # Find the user message in the messages list
+        user_message = next(
+            (msg for msg in request.messages if msg.get("role") == "user"),
+            None
+        )
+        
+        if not user_message:
+            raise HTTPException(
+                status_code=400,
+                detail="No user message found in request"
+            )
 
-        if not article_url:
-            raise HTTPException(status_code=400, detail="Article URL not found in request")
+        # Extract URL using more robust parsing
+        content_lines = user_message.get("content", "").split('\n')
+        url_line = next(
+            (line.strip() for line in content_lines if 'URL:' in line),
+            None
+        )
+        
+        if not url_line:
+            print(f"Debug - Message content: {user_message}")  # Debug log
+            raise HTTPException(
+                status_code=400,
+                detail="Article URL not found in message content"
+            )
+            
+        article_url = url_line.split('URL:')[1].strip()
+        
+        print(f"Debug - Extracted URL: {article_url}")  # Debug log
 
         # Query the database for the article
         query = select(NewsArticle).where(NewsArticle.url == article_url)
@@ -65,30 +114,13 @@ async def generate_analysis_from_news_article(
         article = result.scalar_one_or_none()
 
         if not article:
-            raise HTTPException(status_code=404, detail="Article not found")
-
-        # If content isn't available, try to get it
-        if not article.content:
-            raise HTTPException(status_code=400, detail="Article content not available")
-
-        # Create a new message with the full article content
-        analysis_message = Message(
-            role="user",
-            content=f"""Please analyze this news article:
-Title: {article.title}
-URL: {article.url}
-Content: {article.content}
-
-Please provide a detailed analysis focusing on:
-1. Key facts and claims
-2. Sources cited
-3. Context and background
-4. Potential biases or missing information
-5. Related topics for further research"""
-        )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Article not found for URL: {article_url}"
+            )
 
         # Generate the analysis
-        result = await research_assistant.generate_analysis_from_news_article([analysis_message])
+        result = await research_assistant.generate_analysis_from_news_article(request.messages)
         return result
 
     except HTTPException:
@@ -97,7 +129,7 @@ Please provide a detailed analysis focusing on:
         print(f"Error generating analysis: {str(e)}")  # Debug log
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate analysis: {str(e)}"
+            detail=str(e)
         )
 
 @router.websocket("/ws/chat")
@@ -133,7 +165,7 @@ async def websocket_chat(websocket: WebSocket):
                 continue
                 
             try:
-                messages = [Message(**msg) for msg in messages_data]
+                messages = messages_data
                 print(f"Parsed messages: {messages}")  # Debug log
             except Exception as e:
                 print(f"Message parsing error: {e}")  # Debug log
@@ -166,5 +198,120 @@ async def websocket_chat(websocket: WebSocket):
             "type": "error",
             "error": f"WebSocket error: {str(e)}"
         })
+    finally:
+        await websocket.close()
+
+@router.post("/projects/{project_id}/conversations")
+async def create_conversation(
+    project_id: UUID,
+    name: str = Body(...),
+    db: AsyncSession = Depends(get_db),
+    auth_token: Optional[str] = Cookie(None)
+):
+    """Create a new conversation in a project"""
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="No authentication token found")
+    
+    token_data = security_service.decode_token(auth_token)
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    try:
+        conversation = await conversation_service.create_conversation(project_id, name)
+        return {
+            "id": str(conversation.id),
+            "name": conversation.name,
+            "created_at": conversation.created_at.isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error creating conversation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/projects/{project_id}/conversations")
+async def list_conversations(
+    project_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    auth_token: Optional[str] = Cookie(None)
+):
+    """List all conversations in a project"""
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="No authentication token found")
+    
+    token_data = security_service.decode_token(auth_token)
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    try:
+        conversations = await db.execute(
+            select(Conversation)
+            .where(Conversation.project_id == project_id)
+            .order_by(Conversation.updated_at.desc())
+        )
+        return [
+            {
+                "id": str(conv.id),
+                "name": conv.name,
+                "created_at": conv.created_at.isoformat(),
+                "updated_at": conv.updated_at.isoformat()
+            }
+            for conv in conversations.scalars().all()
+        ]
+    except Exception as e:
+        logger.error(f"Error listing conversations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.websocket("/ws/conversations/{conversation_id}/chat")
+async def websocket_chat(
+    websocket: WebSocket,
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Handle WebSocket chat connections for a specific conversation"""
+    print(f"New WebSocket connection attempt for conversation {conversation_id}")
+    await websocket.accept()
+    
+    try:
+        while True:
+            data = await websocket.receive_json()
+            
+            if data.get("type") != "chat":
+                await websocket.send_json({
+                    "type": "error",
+                    "error": "Invalid message type. Expected 'chat'"
+                })
+                continue
+            
+            messages_data = data.get("messages", [])
+            if not messages_data:
+                await websocket.send_json({
+                    "type": "error",
+                    "error": "No messages found in request"
+                })
+                continue
+            
+            try:
+                # Process message and get response
+                response = await conversation_service.process_message(
+                    conversation_id,
+                    messages_data[-1]["content"]  # Get the last message
+                )
+                
+                # Send response chunks to client
+                async for chunk in research_assistant.chat([{
+                    "role": "user",
+                    "content": messages_data[-1]["content"]
+                }]):
+                    if isinstance(chunk, dict):
+                        await websocket.send_json(chunk)
+                    
+            except Exception as e:
+                logger.error(f"Error processing message: {str(e)}", exc_info=True)
+                await websocket.send_json({
+                    "type": "error",
+                    "error": f"Error processing message: {str(e)}"
+                })
+                
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}", exc_info=True)
     finally:
         await websocket.close()
