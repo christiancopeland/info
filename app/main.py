@@ -32,12 +32,12 @@ setup_cors(app)
 templates = init_templates()
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
-# Include routers
+# Include routers with more specific prefixes
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(websocket_router, prefix="/api/v1/websocket", tags=["websocket"])
-app.include_router(project_router, prefix="/api/v1", tags=["projects"])
+app.include_router(project_router, prefix="/api/v1/projects", tags=["projects"])
 app.include_router(news_routes, prefix="/api/v1/news", tags=["news"])
-app.include_router(entities_router, prefix="/api/v1", tags=["entities"])
+app.include_router(entities_router, prefix="/api/v1/entities", tags=["entities"])
 app.include_router(research_assistant_router, prefix="/api/v1/research_assistant", tags=["research_assistant"])
 
 

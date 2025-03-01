@@ -201,64 +201,7 @@ async def websocket_chat(websocket: WebSocket):
     finally:
         await websocket.close()
 
-@router.post("/projects/{project_id}/conversations")
-async def create_conversation(
-    project_id: UUID,
-    name: str = Body(...),
-    db: AsyncSession = Depends(get_db),
-    auth_token: Optional[str] = Cookie(None)
-):
-    """Create a new conversation in a project"""
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="No authentication token found")
-    
-    token_data = security_service.decode_token(auth_token)
-    if not token_data:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    try:
-        conversation = await conversation_service.create_conversation(project_id, name)
-        return {
-            "id": str(conversation.id),
-            "name": conversation.name,
-            "created_at": conversation.created_at.isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error creating conversation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/projects/{project_id}/conversations")
-async def list_conversations(
-    project_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    auth_token: Optional[str] = Cookie(None)
-):
-    """List all conversations in a project"""
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="No authentication token found")
-    
-    token_data = security_service.decode_token(auth_token)
-    if not token_data:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    try:
-        conversations = await db.execute(
-            select(Conversation)
-            .where(Conversation.project_id == project_id)
-            .order_by(Conversation.updated_at.desc())
-        )
-        return [
-            {
-                "id": str(conv.id),
-                "name": conv.name,
-                "created_at": conv.created_at.isoformat(),
-                "updated_at": conv.updated_at.isoformat()
-            }
-            for conv in conversations.scalars().all()
-        ]
-    except Exception as e:
-        logger.error(f"Error listing conversations: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.websocket("/ws/conversations/{conversation_id}/chat")
 async def websocket_chat(

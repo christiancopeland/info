@@ -2,26 +2,29 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body, Cookie, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, List
+from typing import Optional, List, Dict
 from uuid import UUID
 import magic
 from sqlalchemy import select, delete
 import redis
 from datetime import datetime, timezone
+from fastapi.responses import StreamingResponse
+import json
 
 # Internal imports
 from ....database import get_db
 from ....models.project import ResearchProject
+from ....models.conversation import Conversation
 from ....services.project_service import ProjectService
 from ....services.document_processor import DocumentProcessor
 from ....services.security_service import SecurityService
+from ....services.conversation_service import ConversationService
+from ....services.research_assistant import ResearchAssistant
 from ....core.config import settings
-
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
 
 router = APIRouter()
 
@@ -29,13 +32,16 @@ router = APIRouter()
 document_processor = DocumentProcessor()
 project_service = ProjectService(document_processor)
 security_service = SecurityService(settings.SECRET_KEY, settings.ALGORITHM)
+research_assistant = ResearchAssistant()
 
 # Initialize Redis client
 redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
+# Create conversation service with proper dependencies
+async def get_conversation_service(db: AsyncSession = Depends(get_db)) -> ConversationService:
+    return ConversationService(db, research_assistant)
 
-
-@router.post("/projects")
+@router.post("/")
 async def create_project(
     name: str = Form(...),
     description: Optional[str] = Form(None),
@@ -162,7 +168,7 @@ async def upload_document(
             detail=f"Invalid project_id or folder_id format: {str(ve)}"
         )
 
-@router.get("/projects")
+@router.get("/")
 async def get_projects(
     db: AsyncSession = Depends(get_db),
     auth_token: Optional[str] = Cookie(None)
@@ -220,7 +226,7 @@ Project Details:
         logger.error(f"Error fetching projects: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to fetch projects: {str(e)}")
 
-@router.post("/projects/{project_id}/select")
+@router.post("/{project_id}/select")
 async def select_project(
     project_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -249,7 +255,7 @@ async def select_project(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to select project: {str(e)}")
 
-@router.delete("/projects/{project_id}")
+@router.delete("/{project_id}")
 async def delete_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
@@ -291,7 +297,7 @@ async def delete_project(
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete project: {str(e)}")
 
-@router.put("/projects/{project_id}")
+@router.put("/{project_id}")
 async def update_project(
     project_id: UUID,
     name: str = Body(...),
@@ -342,7 +348,7 @@ async def update_project(
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update project: {str(e)}")
 
-@router.get("/projects/{project_id}/documents")
+@router.get("/{project_id}/documents")
 async def get_project_documents(
     project_id: UUID,
     folder_id: Optional[UUID] = None,
@@ -381,3 +387,109 @@ async def get_project_documents(
     except Exception as e:
         logger.error(f"Error getting project documents: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get documents: {str(e)}")
+    
+
+@router.post("/{project_id}/conversations")
+async def create_conversation(
+    project_id: UUID,
+    name: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    auth_token: Optional[str] = Cookie(None),
+    conversation_service: ConversationService = Depends(get_conversation_service)
+):
+    """Create a new conversation in a project"""
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="No authentication token found")
+    
+    token_data = security_service.decode_token(auth_token)
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    try:
+        # Add input validation
+        if not isinstance(name, str) or not name.strip():
+            raise HTTPException(status_code=422, detail="Name must be a non-empty string")
+            
+        conversation = await conversation_service.create_conversation(project_id, name.strip())
+        return {
+            "id": str(conversation.id),
+            "name": conversation.name
+        }
+    except Exception as e:
+        logger.error(f"Error creating conversation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{project_id}/conversations")
+async def list_conversations(
+    project_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    auth_token: Optional[str] = Cookie(None),
+    conversation_service: ConversationService = Depends(get_conversation_service)
+):
+    """List all conversations in a project"""
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="No authentication token found")
+    
+    token_data = security_service.decode_token(auth_token)
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    try:
+        conversations = await db.execute(
+            select(Conversation)
+            .where(Conversation.project_id == project_id)
+            .order_by(Conversation.updated_at.desc())
+        )
+        return [
+            {
+                "id": str(conv.id),
+                "name": conv.name,
+                "created_at": conv.created_at.isoformat(),
+                "updated_at": conv.updated_at.isoformat()
+            }
+            for conv in conversations.scalars().all()
+        ]
+    except Exception as e:
+        logger.error(f"Error listing conversations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: int,
+    conversation_service: ConversationService = Depends(get_conversation_service)
+) -> List[Dict]:
+    """Get all messages in a conversation"""
+    try:
+        return await conversation_service.get_conversation_history(conversation_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{conversation_id}/messages")
+async def send_message(
+    conversation_id: int,
+    message: Dict = Body(...),
+    conversation_service: ConversationService = Depends(get_conversation_service)
+) -> StreamingResponse:
+    """Send a message and get streaming AI response"""
+    try:
+        generator = await conversation_service.process_message(
+            conversation_id=conversation_id,
+            user_message=message["message"]
+        )
+
+        async def format_stream():
+            async for chunk in generator:
+                # Properly format each chunk as SSE data
+                yield f"data: {json.dumps(chunk)}\n\n"
+
+        return StreamingResponse(
+            format_stream(),
+            media_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error processing message: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

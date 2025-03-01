@@ -3,6 +3,8 @@ class ChatManager {
         this.chatContainer = document.getElementById('chat-messages');
         this.chatInput = document.getElementById('chat-input');
         this.sendButton = document.getElementById('send-button');
+        this.currentConversationId = null;
+        this.isProcessing = false;
         
         if (!this.chatContainer || !this.chatInput || !this.sendButton) {
             console.error('Required chat elements not found:', {
@@ -14,7 +16,6 @@ class ChatManager {
         }
 
         this.setupEventListeners();
-        this.sendWakeMessage();
         console.log('ChatManager initialized');
     }
 
@@ -24,7 +25,6 @@ class ChatManager {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 event.stopPropagation();
-                console.log('Enter key pressed, attempting to send message');
                 this.sendChatMessage();
             }
         });
@@ -32,132 +32,175 @@ class ChatManager {
         // Handle send button click
         this.sendButton.addEventListener('click', (event) => {
             event.preventDefault();
-            console.log('Send button clicked, attempting to send message');
             this.sendChatMessage();
+        });
+
+        // Listen for conversation selection
+        document.addEventListener('conversationSelected', async (event) => {
+            console.log('Conversation selected:', event.detail.conversationId);
+            this.currentConversationId = event.detail.conversationId;
+            await this.loadConversationHistory();
         });
     }
 
-    sendChatMessage() {
-        const message = this.chatInput.value.trim();
-        
-        if (!message) {
-            console.log('No message to send');
-            return;
-        }
+    async loadConversationHistory() {
+        if (!this.currentConversationId) return;
 
-        console.log('Attempting to send message:', message);
+        try {
+            console.log(`Loading conversation history for: ${this.currentConversationId}`);
+            const response = await fetch(`/api/v1/projects/${this.currentConversationId}/messages`);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('API error response:', errorText);
+                throw new Error(`Failed to load conversation history: ${response.status}`);
+            }
+            
+            const messages = await response.json();
+            console.log('Received messages:', messages);
+            
+            // Clear existing messages
+            this.chatContainer.innerHTML = '';
+            
+            // Add each message to the chat
+            if (Array.isArray(messages)) {
+                messages.forEach(msg => {
+                    // Check if the message has the expected structure
+                    if (msg && typeof msg === 'object' && 'role' in msg && 'content' in msg) {
+                        this.appendMessageToUI(msg.role, msg.content);
+                    } else {
+                        console.warn('Unexpected message format:', msg);
+                    }
+                });
+            } else {
+                console.error('Expected array of messages but got:', typeof messages);
+            }
 
-        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
-            console.error('WebSocket is not connected');
-            return;
-        }
-
-        const sent = window.wsManager.sendChatMessage(message);
-        if (sent) {
-            console.log('Message sent successfully');
-            this.chatInput.value = ''; // Clear input after sending
-            window.wsManager.appendMessage('user', message); // Use WebSocketManager's appendMessage
-        } else {
-            console.error('Failed to send message');
+            // Scroll to bottom
+            this.scrollToBottom();
+        } catch (error) {
+            console.error('Error loading conversation history:', error);
+            this.showError('Failed to load conversation history');
         }
     }
 
-    async sendWakeMessage() {
-        console.log('Sending wake message');
+    appendMessageToUI(role, content) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}-message`;
         
-        if (!window.wsManager || !window.wsManager.ws || window.wsManager.ws.readyState !== WebSocket.OPEN) {
-            console.log('WebSocket not ready, waiting...');
-            setTimeout(() => this.sendWakeMessage(), 1000);  // Retry after 1 second
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.innerHTML = marked.parse(content); // Assuming marked.js is available for markdown
+        
+        messageDiv.appendChild(contentDiv);
+        this.chatContainer.appendChild(messageDiv);
+        this.scrollToBottom();
+    }
+
+    scrollToBottom() {
+        this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+    }
+
+    showError(message) {
+        // Add error message to UI
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.textContent = message;
+        this.chatContainer.appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 5000);
+    }
+
+    setProcessingState(isProcessing) {
+        this.isProcessing = isProcessing;
+        this.sendButton.disabled = isProcessing;
+        this.chatInput.disabled = isProcessing;
+        
+        // Update UI to show processing state
+        if (isProcessing) {
+            this.sendButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        } else {
+            this.sendButton.innerHTML = '<i class="fas fa-paper-plane"></i>';
+        }
+    }
+
+    async sendChatMessage() {
+        const message = this.chatInput.value.trim();
+        
+        if (!message || !this.currentConversationId || this.isProcessing) {
             return;
         }
 
-        const wakeMessage = {
-            type: "chat",
-            messages: [{
-                role: "system",
-                content: "You are an AI Research Assistant managing a comprehensive research and intelligence platform designed to help investigators, journalists, and researchers conduct deep research and monitor current events. Your core purpose is to help users discover, analyze, and synthesize information across multiple documents and sources.\n\n" +
-            "PRIMARY CAPABILITIES:\n\n" +
-            "1. Document Processing & Analysis\n" +
-            "- Process multiple document types (PDF, TXT, URL, DOCX)\n" +
-            "- Extract metadata and entities\n" +
-            "- Classify content and assess source credibility\n" +
-            "- Maximum file size: 100MB per document\n" +
-            "- Processing time target: <30 seconds\n\n" +
-            "2. Research Assistance\n" +
-            "- Engage in context-aware conversations about documents\n" +
-            "- Support multiple research modes:\n" +
-            "  * Exploration (open-ended research)\n" +
-            "  * Analysis (deep document examination)\n" +
-            "  * Synthesis (cross-document insights)\n" +
-            "  * Fact-checking (claim verification)\n" +
-            "- Maintain conversation context including active documents and key findings\n" +
-            "- Generate citations and explanations\n\n" +
-            "3. Search & Discovery\n" +
-            "- Execute keyword, semantic, and hybrid searches\n" +
-            "- Detect cross-document references\n" +
-            "- Response time target: <2 seconds\n" +
-            "- Support time-period and source-specific filtering\n\n" +
-            "4. Project Organization\n" +
-            "- Help manage hierarchical project structures (max depth: 10 folders)\n" +
-            "- Track document versions and processing status\n" +
-            "- Support up to 1000 documents per folder\n" +
-            "- Maintain project metadata and settings\n\n" +
-            "5. Entity Tracking & Alerts\n" +
-            "- Monitor entities across all sources\n" +
-            "- Filter false positives\n" +
-            "- Manage alert thresholds\n" +
-            "- Deliver notifications through multiple channels\n\n" +
-            "INTERACTION GUIDELINES:\n\n" +
-            "1. Always maintain context of:\n" +
-            "- Current research project scope\n" +
-            "- Active documents under discussion\n" +
-            "- Recent conversation history\n" +
-            "- Verified facts and hypotheses\n" +
-            "- Pending questions\n\n" +
-            "2. For each user interaction:\n" +
-            "- Consider project context\n" +
-            "- Reference specific documents when appropriate\n" +
-            "- Provide evidence-based responses\n" +
-            "- Suggest relevant next steps\n" +
-            "- Update research state\n\n" +
-            "3. Research Assistance Priorities:\n" +
-            "- Help formulate research questions\n" +
-            "- Identify patterns and connections\n" +
-            "- Highlight contradictions or gaps\n" +
-            "- Generate actionable insights\n" +
-            "- Support fact verification\n\n" +
-            "4. Quality Standards:\n" +
-            "- Maintain >95% document processing accuracy\n" +
-            "- Ensure >90% search relevance\n" +
-            "- Deliver >90% alert precision\n" +
-            "- Provide clear citations for claims\n" +
-            "- Generate verifiable conclusions\n\n" +
-            "SECURITY CONSIDERATIONS:\n" +
-            "- Respect end-to-end encryption for sensitive data\n" +
-            "- Adhere to role-based access controls\n" +
-            "- Maintain audit logs\n" +
-            "- Follow data retention policies\n" +
-            "- Ensure GDPR/CCPA compliance\n\n" +
-            "Remember: Your primary goal is to augment human research capabilities by providing intelligent, context-aware assistance while maintaining high standards of accuracy and evidence-based analysis."
+        try {
+            this.setProcessingState(true);
+            
+            // Immediately append user message to UI
+            this.appendMessageToUI('user', message);
+            
+            // Clear input right after showing the message
+            this.chatInput.value = '';
 
+            // Create assistant message container for streaming
+            const assistantMessageDiv = document.createElement('div');
+            assistantMessageDiv.className = 'message assistant-message';
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            assistantMessageDiv.appendChild(contentDiv);
+            this.chatContainer.appendChild(assistantMessageDiv);
 
-                // content: `You are an AI Research Assistant working with an investigative journalist. 
-                // Your purpose is to help analyze documents, track entities, monitor news, and synthesize 
-                // information across multiple sources. You can assist with document analysis, entity tracking, 
-                // news monitoring, and research synthesis. Always maintain a professional and helpful demeanor, 
-                // focusing on factual information and clear citations when available.`
-            }, {
-                role: "user",
-                content: "Explain what all I can do with you, step by step. Do not affirm this request, simply provide the explanation. Do not say 'Of Course!', 'Absolutely', or anything along those lines. You are the first thing the investigative journalist will hear, and will think it sounds wierd if you say 'Of Course' if they haven't said anything to you yet. "
-            }]
-        };
+            const response = await fetch(`/api/v1/projects/${this.currentConversationId}/messages`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
+                },
+                body: JSON.stringify({ message: message })
+            });
 
-        const sent = window.wsManager.ws.send(JSON.stringify(wakeMessage));
-        if (sent) {
-            console.log('Wake message sent successfully');
-            window.wsManager.appendMessage('user', wakeMessage.messages[1].content);
-        } else {
-            console.error('Failed to send wake message');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Failed to send message');
+            }
+            
+            let assistantResponse = '';
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            
+                            if (data.type === 'chunk') {
+                                assistantResponse += data.content;
+                                contentDiv.innerHTML = marked.parse(assistantResponse);
+                                this.scrollToBottom();
+                            } else if (data.type === 'error') {
+                                throw new Error(data.content);
+                            } else if (data.type === 'done') {
+                                // Final message received, no further action needed
+                                break;
+                            }
+                        } catch (e) {
+                            console.error('Error parsing SSE data:', e);
+                        }
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.error('Error sending message:', error);
+            this.showError('Failed to send message');
+            // Remove the incomplete assistant message if there was an error
+            assistantMessageDiv?.remove();
+        } finally {
+            this.setProcessingState(false);
         }
     }
 }
@@ -165,6 +208,5 @@ class ChatManager {
 // Initialize chat when the chatReady event is fired
 document.addEventListener('chatReady', () => {
     console.log('Chat ready event received, initializing ChatManager');
-    window.initializeChat(); // This creates the WebSocketManager
     window.chatManager = new ChatManager();
 });

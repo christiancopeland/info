@@ -70,19 +70,9 @@
 
             <!-- Main Content Area - Modified Grid -->
             <div class="workspace-grid">
-                <!-- Left Sidebar: Collapsible Document Panel -->
-                <div class="side-panel document-panel" id="documentPanel">
-                    <div class="panel-header">
-                        <h3>Documents</h3>
-                        <div class="document-controls">
-                            <button id="uploadDoc" class="file-upload-btn">
-                                <i class="fas fa-upload"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="documentTree">
-                        <!-- Documents will be rendered here -->
-                    </div>
+                <!-- Left Sidebar: Conversations Panel (replacing Document Panel) -->
+                <div class="side-panel conversations-panel" id="sidebar-content">
+                    <!-- ConversationsSidebar will inject content here -->
                 </div>
 
                 <!-- Center: Research Assistant Chat -->
@@ -197,7 +187,7 @@
     <script defer src="{{ url_for('static', path='/js/projects.js') }}"></script>
     <script defer src="{{ url_for('static', path='/js/workspace.js') }}"></script>
     <script src="{{ url_for('static', path='/js/research_sidebar.js') }}"></script>
-    <script src="{{ url_for('static', path='/js/research_conversations.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/conversations_sidebar.js') }}"></script>
     <script src="{{ url_for('static', path='/js/document_upload.js') }}"></script>
     <script src="{{ url_for('static', path='/js/news_feed.js') }}"></script>
     <script src="{{ url_for('static', path='/js/entity_tracking.js') }}"></script>

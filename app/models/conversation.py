@@ -1,18 +1,17 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, JSON, UUID
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, JSON
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from datetime import datetime, timezone
 from app.database import Base
 
 class Conversation(Base):
     __tablename__ = "conversations"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    project_id = Column(UUID, ForeignKey("research_projects.project_id"))
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
-    
-    # Rename metadata to meta_data to avoid conflict with SQLAlchemy's reserved word
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('research_projects.project_id'))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     meta_data = Column(JSON, default=dict)
     
     # Relationships
@@ -22,13 +21,11 @@ class Conversation(Base):
 class Message(Base):
     __tablename__ = "messages"
 
-    id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(Integer, ForeignKey("conversations.id"))
-    role = Column(String)  # 'user' or 'assistant'
-    content = Column(String)
-    timestamp = Column(DateTime, default=datetime.now(timezone.utc))
-    
-    # Rename metadata to meta_data
+    id = Column(Integer, primary_key=True)
+    conversation_id = Column(Integer, ForeignKey('conversations.id', ondelete='CASCADE'))
+    role = Column(String(50), nullable=False)
+    content = Column(String, nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
     meta_data = Column(JSON, default=dict)
     
     # Relationship

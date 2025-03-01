@@ -1,7 +1,7 @@
 from typing import Dict, Optional
 from sqlalchemy import Column, String, JSON, ForeignKey, UniqueConstraint, Index, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from ..database import Base
 
@@ -24,7 +24,7 @@ class TrackedEntity(Base):
     name = Column(String, nullable=False)
     name_lower = Column(String, nullable=False)
     entity_type = Column(String, nullable=False)
-    created_at = Column(String, nullable=False, default=lambda: datetime.utcnow().isoformat())
+    created_at = Column(String, nullable=False, default=lambda: datetime.now(timezone.utc))
     entity_metadata = Column(JSON, nullable=True)
     
     __table_args__ = (

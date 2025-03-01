@@ -48,7 +48,7 @@ class ProjectManager {
     async loadProjects() {
         try {
             console.log('Loading projects...');
-            const response = await fetch('/api/v1/projects', {
+            const response = await fetch('/api/v1/projects/', {
                 method: 'GET',
                 credentials: 'include',
                 headers: {
@@ -95,7 +95,16 @@ class ProjectManager {
 
         // Add click handler to select project (but not when clicking settings)
         const projectInfo = projectElement.querySelector('.project-info');
-        projectInfo.addEventListener('click', () => this.selectProject(project.id));
+        projectInfo.addEventListener('click', () => {
+            // Instead of directly calling selectProject, dispatch the event with details
+            document.dispatchEvent(new CustomEvent('projectSelected', {
+                detail: {
+                    projectId: project.id,
+                    name: project.name
+                }
+            }));
+            this.selectProject(project.id);  // Call selectProject after dispatching event
+        });
 
         // Add settings button handler
         const settingsBtn = projectElement.querySelector('.project-settings-btn');
@@ -121,14 +130,13 @@ class ProjectManager {
         }
 
         try {
-            // Create URLSearchParams to send data as form data
             const params = new URLSearchParams();
             params.append('name', name);
             if (description) {
                 params.append('description', description);
             }
 
-            const response = await fetch('/api/v1/projects', {
+            const response = await fetch('/api/v1/projects/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -192,9 +200,6 @@ class ProjectManager {
                         name: projectName
                     });
                 }
-
-                // Dispatch event for other components
-                document.dispatchEvent(new Event('projectSelected'));
             }
         } catch (error) {
             console.error('Error selecting project:', error);
