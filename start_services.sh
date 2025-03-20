@@ -11,10 +11,6 @@
     cd ~/AI/local_stuff/InformationIngestion
     ./startqdrant > ~/qdrant.log 2>&1 < /dev/null &
 
-    # Start ollama (ensure sudo doesn't prompt for password)
-    cd ~/
-    sudo ollama serve > ~/ollama.log 2>&1 < /dev/null &
-
     # Wait for all background processes
     wait
 )

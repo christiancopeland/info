@@ -30,7 +30,7 @@ class Metadata(BaseModel):
     favicon: str
     language: str
     keywords: str | None = None
-    robots: str | None = None
+    robots: str | List[str] | None = None
     ogTitle: str | None = None
     ogUrl: str | None = None
     ogImage: str | None = None
@@ -65,7 +65,7 @@ class BatchScraper:
         if api_key:
             self.headers["Authorization"] = f"Bearer {api_key}"
 
-    def extract_articles_batch(self, urls: List[str], max_retries: int = 20, retry_delay: int = 5) -> List[Article]:
+    def extract_articles_batch(self, urls: List[str], max_retries: int = 40, retry_delay: int = 10) -> List[Article]:
         # Step 1: Initialize batch job
         batch_payload = {
             "urls": urls,
@@ -156,8 +156,8 @@ class BatchScraper:
                     if result_data.completed > 0:
                         backoff = retry_delay
                     else:
-                        # Exponential backoff up to 30 seconds
-                        backoff = min(backoff * 1.5, 30)
+                        # Exponential backoff up to 60 seconds (increased from 30)
+                        backoff = min(backoff * 1.5, 60)
                     
                     print(f"Job status: {result_data.status} ({result_data.completed}/{result_data.total})")
                 
@@ -312,6 +312,168 @@ async def scrape_liveblog_content(url: str, filtered_phrases: List[str]) -> str:
         finally:
             await browser.close()
 
+async def scrape_ap_content(url: str, filtered_phrases: List[str]) -> str:
+    """Scrape content from Associated Press articles using Playwright."""
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            page = await context.new_page()
+            
+            try:
+                await page.goto(url, timeout=60000, wait_until='domcontentloaded')
+                await page.wait_for_selector('.RichTextStoryBody', timeout=30000)
+                await page.wait_for_timeout(2000)
+                
+            except Exception as e:
+                print(f"Navigation error for {url}: {str(e)}")
+                return f"Error loading page: {str(e)}"
+            
+            text_content = []
+            
+            # Get the main headline
+            try:
+                main_title = await page.query_selector('h1.Page-headline')
+                if main_title:
+                    title_text = await main_title.text_content()
+                    text_content.append(f"# {title_text.strip()}\n")
+            except Exception as e:
+                print(f"Error extracting title: {str(e)}")
+            
+            # Get the article content
+            try:
+                # Get all content elements within the RichTextStoryBody div
+                story_body = await page.query_selector('.RichTextStoryBody')
+                if story_body:
+                    # Get all h2 and p elements in order
+                    content_elements = await story_body.query_selector_all('h2, p')
+                    
+                    for element in content_elements:
+                        # Get element tag name
+                        tag_name = await element.evaluate('element => element.tagName.toLowerCase()')
+                        
+                        # Skip certain elements
+                        if tag_name == 'h2':
+                            element_text = await element.text_content()
+                            if "___" in element_text:
+                                continue
+                        
+                        # Check if element has RelatedContentLink class
+                        has_related_class = await element.evaluate('element => element.classList.contains("RelatedContentLink")')
+                        if has_related_class:
+                            continue
+                        
+                        # Get element text
+                        element_text = await element.text_content()
+                        if element_text.strip() and not any(phrase.lower() in element_text.lower() for phrase in filtered_phrases):
+                            if tag_name == 'h2':
+                                text_content.append(f"\n## {element_text.strip()}\n")
+                            else:
+                                text_content.append(element_text.strip())
+                
+            except Exception as e:
+                print(f"Error processing article content: {str(e)}")
+            
+            # Clean up and join the content
+            final_content = '\n\n'.join(text_content)
+            if not final_content.strip():
+                return "No content could be extracted from the page."
+                
+            return final_content
+            
+        except Exception as e:
+            print(f"Unexpected error in scrape_ap_content: {str(e)}")
+            return f"Error scraping content: {str(e)}"
+            
+        finally:
+            await browser.close()
+
+async def scrape_local3news_content(url: str, filtered_phrases: List[str]) -> str:
+    """Scrape content from Local3News articles using Playwright."""
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            page = await context.new_page()
+            
+            try:
+                await page.goto(url, timeout=60000, wait_until='domcontentloaded')
+                await page.wait_for_selector('#article-body', timeout=30000)
+                await page.wait_for_timeout(2000)
+                
+            except Exception as e:
+                print(f"Navigation error for {url}: {str(e)}")
+                return f"Error loading page: {str(e)}"
+            
+            text_content = []
+            
+            # Get the main headline
+            try:
+                main_title = await page.query_selector('h1.headline span')
+                if main_title:
+                    title_text = await main_title.text_content()
+                    text_content.append(f"# {title_text.strip()}\n")
+            except Exception as e:
+                print(f"Error extracting title: {str(e)}")
+            
+            # Get the article content
+            try:
+                # Get all content elements within the article body div
+                content_elements = await page.query_selector_all('#article-body p')
+                
+                # Additional phrases to filter out
+                additional_filters = [
+                    "Reporter",
+                    "spaceplay / pause",
+                    "qunload | stop",
+                    "ffullscreen",
+                    "shift + ←→slower / faster",
+                    "↑↓volume",
+                    "mmute",
+                    "←→seek",
+                    "seek to previous",
+                    "seek to 10%",
+                    "Around the Web",
+                    "LOCAL 3 WEATHER",
+                    "Today will be warmer than yesterday",
+                ]
+                filtered_phrases.extend(additional_filters)
+                
+                for element in content_elements:
+                    element_text = await element.text_content()
+                    
+                    # Skip empty elements or those containing filtered phrases
+                    if not element_text.strip() or any(phrase.lower() in element_text.lower() for phrase in filtered_phrases):
+                        continue
+                    
+                    # Skip elements that look like video player controls or metadata
+                    if any(control in element_text.lower() for control in ['play', 'pause', 'volume', 'mute', 'seek']):
+                        continue
+                    
+                    text_content.append(element_text.strip())
+                
+            except Exception as e:
+                print(f"Error processing article content: {str(e)}")
+            
+            final_content = '\n\n'.join(text_content)
+            if not final_content.strip():
+                return "No content could be extracted from the page."
+                
+            return final_content
+            
+        except Exception as e:
+            print(f"Unexpected error in scrape_local3news_content: {str(e)}")
+            return f"Error scraping content: {str(e)}"
+            
+        finally:
+            await browser.close()
+
 async def scrape_and_store_news():
     """Scrape news articles and store them in a test output file and database."""
     filtered_phrases = [
@@ -385,8 +547,16 @@ async def scrape_and_store_news():
                     if 'liveblog' in article.url.lower():
                         print(f"Detected liveblog: {article.url}")
                         content = await scrape_liveblog_content(article.url, filtered_phrases=filtered_phrases)
+                    # Check if it's an AP article
+                    elif 'apnews.com' in article.url.lower():
+                        print(f"Detected AP article: {article.url}")
+                        content = await scrape_ap_content(article.url, filtered_phrases=filtered_phrases)
+                    # Check if it's a Local3News article
+                    elif 'local3news.com' in article.url.lower():
+                        print(f"Detected Local3News article: {article.url}")
+                        content = await scrape_local3news_content(article.url, filtered_phrases=filtered_phrases)
                     else:
-                        # Use regular scraping for non-liveblog articles
+                        # Use regular scraping for other articles
                         content = await news_service.scrape_article_content(article.url)
                     
                     # Filter out unwanted phrases from the content
